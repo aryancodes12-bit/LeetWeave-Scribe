@@ -101,6 +101,7 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
   const explanationPath = `${config.destinationRoot}/${folder}/${problemFolder}/README.md`;
   const statsPath = `${config.destinationRoot}/stats.json`;
   const readmePath = `${config.destinationRoot}/README.md`;
+  const rootReadmePath = 'README.md'; // the actual top-level repo README, distinct from the one inside destinationRoot
 
   // 1. Push the solution file (create or update — check for existing sha first).
   const existingSolution = await client.getFile(solutionPath).catch((err) => {
@@ -122,9 +123,10 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
   //    and never blocks the rest of the sync (solution push already happened above).
   {
     let aiSection: string | null = null;
-    if (GROQ_API_KEY) {
+    const groqKey = config.groqApiKey || GROQ_API_KEY;
+    if (groqKey) {
       try {
-        aiSection = await generateExplanation(metadata, GROQ_API_KEY);
+        aiSection = await generateExplanation(metadata, groqKey);
       } catch (err) {
         console.warn('[LWS] AI explanation step failed, README will ship without it:', err);
       }
@@ -160,6 +162,18 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     renderedReadme,
     `Update README - LC${metadata.id}`,
     existingReadme?.sha,
+  );
+
+  // Also mirror the same stats block into the repo's actual top-level README —
+  // marker-based, so any hand-written project description outside the
+  // <!-- dsa-sync:start/end --> block is preserved, same as organized/README.md.
+  const existingRootReadme = await client.getFile(rootReadmePath).catch(() => null);
+  const renderedRootReadme = renderRootReadme(existingRootReadme?.content ?? null, updatedStats);
+  await client.putFile(
+    rootReadmePath,
+    renderedRootReadme,
+    `Update README - LC${metadata.id}`,
+    existingRootReadme?.sha,
   );
 
   await chrome.storage.local.set({ stats: updatedStats });

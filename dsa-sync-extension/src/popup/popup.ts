@@ -69,6 +69,13 @@ function renderSetupForm(existing?: Partial<ExtensionConfig>): void {
     <label for="githubToken">GitHub Personal Access Token</label>
     <input id="githubToken" type="password" placeholder="ghp_..." value="${escapeAttr(existing?.githubToken ?? '')}" />
 
+    <label for="groqApiKey">Groq API Key <span style="font-weight:400;color:var(--gh-fg-muted);text-transform:none;">(optional)</span></label>
+    <input id="groqApiKey" type="password" placeholder="gsk_..." value="${escapeAttr(existing?.groqApiKey ?? '')}" />
+    <p class="hint" style="margin-top:4px;">
+      Every problem gets a README automatically. Add a key here to also include an AI-written approach + complexity section — saved the same way as your GitHub token, never lost on reload.
+      <a id="groq-link" href="#">Get a free key from Groq Console →</a>
+    </p>
+
     <button id="save" class="primary full-width setup-save">Connect &amp; Save</button>
     <p class="hint">
       Needs a token with <strong>repo</strong> scope.
@@ -82,6 +89,11 @@ function renderSetupForm(existing?: Partial<ExtensionConfig>): void {
     chrome.tabs.create({ url: 'https://github.com/settings/tokens/new?scopes=repo&description=LeetWeave-Scribe' });
   });
 
+  document.getElementById('groq-link')!.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: 'https://console.groq.com/keys' });
+  });
+
   document.getElementById('save')!.addEventListener('click', async () => {
     const config: ExtensionConfig = {
       repoOwner: getValue('repoOwner'),
@@ -93,6 +105,7 @@ function renderSetupForm(existing?: Partial<ExtensionConfig>): void {
       fallbackFolder: getValue('fallbackFolder') || 'Uncategorized',
       namingPattern: getValue('namingPattern'),
       githubToken: getValue('githubToken'),
+      groqApiKey: getValue('groqApiKey'),
     };
 
     const status = document.getElementById('status')!;

@@ -27,6 +27,9 @@ export interface ExtensionConfig {
   fallbackFolder: string;
   namingPattern: string;
   githubToken: string;
+  /** Optional — user-entered in the popup, stored the same way as githubToken.
+   *  Falls back to the build-time GROQ_API_KEY (.env) constant if left empty. */
+  groqApiKey?: string;
 }
 
 export interface SyncedProblem {
