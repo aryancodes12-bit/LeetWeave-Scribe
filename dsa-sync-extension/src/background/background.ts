@@ -1,6 +1,6 @@
 import { resolveDestinationFolder, resolveFileName } from '../shared/rule-engine.js';
 import { applySolvedProblem, emptyStats } from '../shared/stats.js';
-import { renderReadme } from '../shared/readme.js';
+import { renderRootReadme, renderCompactReadme } from '../shared/readme.js';
 import { GitHubClient, GitHubApiError } from '../shared/github.js';
 import { generateExplanation } from '../shared/groq.js';
 import { GROQ_API_KEY } from '../shared/env.js';
@@ -154,10 +154,10 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingStatsFile?.sha,
   );
 
-  // 4a. Update organized/README.md — FULL block (Progress heading + Recent Solutions table).
-  //     Marker-based: content outside <!-- STATS:START/END --> is never touched.
+  // 4a. Update organized/README.md — full block (Progress heading + Recent Solutions table).
+  //     Marker-based: content outside <!-- dsa-sync:start/end --> is never touched.
   const existingReadme = await client.getFile(readmePath).catch(() => null);
-  const renderedReadme = renderReadme(existingReadme?.content ?? null, updatedStats, 'full');
+  const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
   await client.putFile(
     readmePath,
     renderedReadme,
@@ -165,11 +165,15 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingReadme?.sha,
   );
 
-  // 4b. Update root README.md — COMPACT block (summary line + streak + link to full log).
-  //     Distinct from organized/README.md: only a one-liner so the hand-maintained
-  //     topic index tables are never disturbed. Content outside STATS markers preserved.
+  // 4b. Update root README.md — compact block (summary line + streak + link to full log).
+  //     Only a one-liner so the hand-maintained topic index tables are never disturbed.
+  //     Content outside <!-- dsa-sync:start/end --> markers is preserved exactly.
   const existingRootReadme = await client.getFile(rootReadmePath).catch(() => null);
-  const renderedRootReadme = renderReadme(existingRootReadme?.content ?? null, updatedStats, 'compact');
+  const renderedRootReadme = renderCompactReadme(
+    existingRootReadme?.content ?? null,
+    updatedStats,
+    `${config.destinationRoot}/README.md`,
+  );
   await client.putFile(
     rootReadmePath,
     renderedRootReadme,

@@ -25,8 +25,8 @@
 
 </div>
 
-<!-- STATS:START -->
-<!-- STATS:END -->
+<!-- dsa-sync:start -->
+<!-- dsa-sync:end -->
 
 ## 💡 Why this exists
 

@@ -1,105 +1,56 @@
 import type { SyncStats } from './types.js';
 
 // ─── Marker constants ────────────────────────────────────────────────────────
-// New canonical marker pair used in both README targets.
-const MARKER_START = '<!-- STATS:START -->';
-const MARKER_END = '<!-- STATS:END -->';
+// These are the canonical markers used in every README target. All content
+// between them is owned by the sync engine; everything outside is hand-written
+// and never touched.
+const MARKER_START = '<!-- dsa-sync:start -->';
+const MARKER_END = '<!-- dsa-sync:end -->';
 
-// Legacy marker pair written by earlier versions of the engine.
-// Recognized on read so existing organized/README.md files are migrated
-// transparently on the next sync — no manual editing required.
-const LEGACY_MARKER_START = '<!-- dsa-sync:start -->';
-const LEGACY_MARKER_END = '<!-- dsa-sync:end -->';
-
-// ─── Public variant types ────────────────────────────────────────────────────
-
-export type ReadmeVariant = 'full' | 'compact';
-
-// ─── Core public API ─────────────────────────────────────────────────────────
+// ─── Public entry points ─────────────────────────────────────────────────────
 
 /**
- * Idempotent, marker-based README renderer. Replaces the content between
- * `<!-- STATS:START -->` and `<!-- STATS:END -->` with the rendered stats
- * block, leaving everything outside the markers exactly as-is.
+ * Idempotent marker-based writer for `organized/README.md`.
+ * Replaces the content between `<!-- dsa-sync:start -->` and
+ * `<!-- dsa-sync:end -->` with the full Progress + Recent Solutions block,
+ * leaving everything outside the markers exactly as-is.
  *
- * - `variant = 'full'`    → Progress heading + Recent Solutions table
- *                           (used for organized/README.md)
- * - `variant = 'compact'` → Single summary line + streak + link to full log
- *                           (used for root README.md)
- *
- * @param existingContent  Current file content, or null if the file doesn't
- *                         exist yet (the rendered block is returned as-is).
- * @param stats            Live stats computed by applySolvedProblem.
- * @param variant          Which template to use.
- * @param organizedPath    Path to the organized README, shown in the compact
- *                         "Full progress log →" link. Defaults to
- *                         "organized/README.md".
+ * @param existingContent  Current file content, or null for a brand-new file.
+ * @param stats            Live stats object from applySolvedProblem.
  */
-export function renderReadme(
-  existingContent: string | null,
-  stats: SyncStats,
-  variant: ReadmeVariant,
-  organizedPath = 'organized/README.md',
-): string {
-  const block =
-    variant === 'compact'
-      ? renderCompactBlock(stats, organizedPath)
-      : renderFullBlock(stats);
-
-  if (!existingContent) return block;
-
-  // Migrate legacy markers to new markers so we can use a single code path.
-  const content = migrateLegacyMarkers(existingContent);
-
-  const hasMarkers = content.includes(MARKER_START) && content.includes(MARKER_END);
-  if (!hasMarkers) {
-    // No markers at all — append block at the end (first-run behaviour).
-    return `${content.trimEnd()}\n\n${block}`;
-  }
-
-  const before = content.slice(0, content.indexOf(MARKER_START));
-  const after = content.slice(content.indexOf(MARKER_END) + MARKER_END.length);
-  return `${before}${block}${after}`;
+export function renderRootReadme(existingContent: string | null, stats: SyncStats): string {
+  return applyMarkers(existingContent, renderFullBlock(stats));
 }
 
 /**
- * Returns a simple before/after diff string showing what `renderReadme`
- * *would* write, without touching any file. Designed for `--dry-run` output.
- * Returns an empty string when the file would not change.
+ * Idempotent marker-based writer for the repo-root `README.md`.
+ * Writes a compact one-liner summary + link instead of the full table, so the
+ * hand-maintained topic index below is never disturbed.
+ *
+ * @param existingContent  Current file content, or null for a brand-new file.
+ * @param stats            Live stats object from applySolvedProblem.
+ * @param organizedPath    Repo-relative path to the full progress README
+ *                         (e.g. `"organized/README.md"`). Shown in the link.
  */
-export function diffReadme(
+export function renderCompactReadme(
   existingContent: string | null,
   stats: SyncStats,
-  variant: ReadmeVariant,
-  organizedPath = 'organized/README.md',
+  organizedPath: string,
 ): string {
-  const next = renderReadme(existingContent, stats, variant, organizedPath);
-  const prev = existingContent ?? '';
-
-  if (prev === next) return '';
-
-  // Produce a simple line-by-line diff (--- / +++ style) without requiring
-  // a diff library — just enough to see what changed in a dry-run log.
-  const prevLines = prev.split('\n');
-  const nextLines = next.split('\n');
-
-  const removed = prevLines
-    .filter((l) => !nextLines.includes(l))
-    .map((l) => `- ${l}`)
-    .join('\n');
-  const added = nextLines
-    .filter((l) => !prevLines.includes(l))
-    .map((l) => `+ ${l}`)
-    .join('\n');
-
-  return [removed, added].filter(Boolean).join('\n');
+  return applyMarkers(existingContent, renderCompactBlock(stats, organizedPath));
 }
 
-// ─── Block renderers ─────────────────────────────────────────────────────────
+// ─── Block builders (pure, no I/O, no markers) ───────────────────────────────
 
 /**
- * Full block: Progress heading + difficulty breakdown + Recent Solutions table.
- * Written to `organized/README.md`.
+ * Builds the full stats block content (without wrapper markers).
+ * Written inside the marker pair by renderRootReadme.
+ *
+ * Includes:
+ *   - ## 📊 Progress heading
+ *   - Easy / Medium / Hard counts
+ *   - ## Recent Solutions table
+ *   - Last-synced timestamp
  */
 export function renderFullBlock(stats: SyncStats): string {
   const recentTable = stats.recent
@@ -107,7 +58,6 @@ export function renderFullBlock(stats: SyncStats): string {
     .join('\n');
 
   return [
-    MARKER_START,
     '## 📊 Progress',
     '',
     `✔ **${stats.total}** problems solved · 🔥 **${stats.currentStreak}** day streak (longest: ${stats.longestStreak})`,
@@ -123,51 +73,61 @@ export function renderFullBlock(stats: SyncStats): string {
     recentTable || '| — | _none yet_ | — | — | — |',
     '',
     `_Last synced: ${stats.lastSyncedAt ?? 'never'}_`,
-    MARKER_END,
   ].join('\n');
 }
 
 /**
- * Compact block: one-liner summary + difficulty counts + link to full log.
- * Written to the root `README.md` so it stays readable without cluttering the
- * hand-maintained topic index.
+ * Builds the compact stats block content (without wrapper markers).
+ * Written inside the marker pair by renderCompactReadme.
  *
- * Example output (between markers):
- *   📊 14 problems solved · 🔥 5 day streak (longest: 6)
+ * Example output:
+ *   📊 **14** problems solved · 🔥 **5** day streak (longest: 6)
  *   Easy: 9 · Medium: 5 · Hard: 0
  *   📁 [Full progress log →](organized/README.md)
+ *
+ * @param organizedPath  Repo-relative path shown in the "Full progress log" link.
  */
-export function renderCompactBlock(
-  stats: SyncStats,
-  organizedPath = 'organized/README.md',
-): string {
+export function renderCompactBlock(stats: SyncStats, organizedPath: string): string {
   return [
-    MARKER_START,
     `📊 **${stats.total}** problems solved · 🔥 **${stats.currentStreak}** day streak (longest: ${stats.longestStreak})`,
     `Easy: ${stats.easy} · Medium: ${stats.medium} · Hard: ${stats.hard}`,
     `📁 [Full progress log →](${organizedPath})`,
-    MARKER_END,
   ].join('\n');
 }
 
-// ─── Backward-compat alias ───────────────────────────────────────────────────
+// ─── Internal helper ─────────────────────────────────────────────────────────
 
 /**
- * @deprecated Use `renderReadme(content, stats, 'full')` instead.
- *             Kept for any callers not yet migrated to the new API.
+ * Shared marker-replacement logic used by both renderRootReadme and
+ * renderCompactReadme. Wraps `block` in the canonical marker pair, then:
+ *
+ * - If existingContent is null  → returns the wrapped block as-is (new file).
+ * - If markers are present      → slices before/after and splices the block in.
+ * - If no markers found yet     → appends the wrapped block below existing content.
+ *
+ * The before/after slice approach makes every write idempotent: running twice
+ * on the same data produces byte-identical output with no marker duplication.
  */
-export function renderRootReadme(existingContent: string | null, stats: SyncStats): string {
-  return renderReadme(existingContent, stats, 'full');
+function applyMarkers(existingContent: string | null, block: string): string {
+  const wrapped = `${MARKER_START}\n${block}\n${MARKER_END}`;
+
+  if (!existingContent) return wrapped;
+
+  const hasMarkers =
+    existingContent.includes(MARKER_START) && existingContent.includes(MARKER_END);
+
+  if (!hasMarkers) {
+    // First run on a file that already has hand-written content but no markers
+    // (e.g. an existing LeetHub-generated README). Append below existing content.
+    return `${existingContent.trimEnd()}\n\n${wrapped}`;
+  }
+
+  const before = existingContent.slice(0, existingContent.indexOf(MARKER_START));
+  const after = existingContent.slice(existingContent.indexOf(MARKER_END) + MARKER_END.length);
+  return `${before}${wrapped}${after}`;
 }
 
-// ─── Internal helpers ────────────────────────────────────────────────────────
-
-/** Replace legacy `dsa-sync:start/end` markers with the canonical STATS markers. */
-function migrateLegacyMarkers(content: string): string {
-  return content
-    .replace(LEGACY_MARKER_START, MARKER_START)
-    .replace(LEGACY_MARKER_END, MARKER_END);
-}
+// ─── Internal utilities ───────────────────────────────────────────────────────
 
 function escapeMd(text: string): string {
   return text.replace(/([|*_`])/g, '\\$1');
