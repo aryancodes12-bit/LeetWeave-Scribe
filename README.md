@@ -25,6 +25,9 @@
 
 </div>
 
+<!-- STATS:START -->
+<!-- STATS:END -->
+
 ## 💡 Why this exists
 
 Most GitHub sync tools dump accepted solutions into one flat folder per problem, in submission order. That doesn't match how most people actually study — topic-based sheets, difficulty progression, custom syllabi. This project sits on top of that raw output — or replaces it entirely — and reshapes it into whatever structure you actually follow, then keeps a live stats dashboard and per-problem notes updated automatically.

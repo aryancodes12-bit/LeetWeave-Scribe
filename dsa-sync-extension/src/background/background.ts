@@ -1,6 +1,6 @@
 import { resolveDestinationFolder, resolveFileName } from '../shared/rule-engine.js';
 import { applySolvedProblem, emptyStats } from '../shared/stats.js';
-import { renderRootReadme } from '../shared/readme.js';
+import { renderReadme } from '../shared/readme.js';
 import { GitHubClient, GitHubApiError } from '../shared/github.js';
 import { generateExplanation } from '../shared/groq.js';
 import { GROQ_API_KEY } from '../shared/env.js';
@@ -154,9 +154,10 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingStatsFile?.sha,
   );
 
-  // 4. Update README.md (marker-based, preserves hand-written content)
+  // 4a. Update organized/README.md — FULL block (Progress heading + Recent Solutions table).
+  //     Marker-based: content outside <!-- STATS:START/END --> is never touched.
   const existingReadme = await client.getFile(readmePath).catch(() => null);
-  const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
+  const renderedReadme = renderReadme(existingReadme?.content ?? null, updatedStats, 'full');
   await client.putFile(
     readmePath,
     renderedReadme,
@@ -164,11 +165,11 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingReadme?.sha,
   );
 
-  // Also mirror the same stats block into the repo's actual top-level README —
-  // marker-based, so any hand-written project description outside the
-  // <!-- dsa-sync:start/end --> block is preserved, same as organized/README.md.
+  // 4b. Update root README.md — COMPACT block (summary line + streak + link to full log).
+  //     Distinct from organized/README.md: only a one-liner so the hand-maintained
+  //     topic index tables are never disturbed. Content outside STATS markers preserved.
   const existingRootReadme = await client.getFile(rootReadmePath).catch(() => null);
-  const renderedRootReadme = renderRootReadme(existingRootReadme?.content ?? null, updatedStats);
+  const renderedRootReadme = renderReadme(existingRootReadme?.content ?? null, updatedStats, 'compact');
   await client.putFile(
     rootReadmePath,
     renderedRootReadme,
