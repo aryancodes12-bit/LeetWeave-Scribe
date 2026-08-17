@@ -36,7 +36,13 @@ window.addEventListener(EVENT_NAME, (event) => {
 });
 
 function isContextInvalidatedError(err: unknown): boolean {
-  return err instanceof Error && err.message.includes('Extension context invalidated');
+  if (!err) return false;
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes('Extension context invalidated') ||
+    msg.includes("reading 'sendMessage'") ||
+    msg.includes('chrome.runtime')
+  );
 }
 
 async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
@@ -65,8 +71,12 @@ async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
 
   showToast({ status: 'syncing', message: metadata.title });
 
+  if (!chrome?.runtime?.sendMessage) {
+    throw new Error('Extension context invalidated: chrome.runtime is unavailable');
+  }
+
   chrome.runtime.sendMessage({ type: 'DSA_SYNC_ACCEPTED', metadata }, (response) => {
-    if (chrome.runtime.lastError) {
+    if (chrome.runtime?.lastError) {
       showToast({ status: 'error', message: chrome.runtime.lastError.message ?? 'Sync failed.' });
       return;
     }

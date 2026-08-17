@@ -30,7 +30,7 @@ describe('GitHubClient.putFile conflict retry', () => {
       return jsonResponse(200, { content: Buffer.from('fresh content').toString('base64'), sha: 'FRESH_SHA' });
     }));
 
-    const client = new GitHubClient('token', 'owner', 'repo', 'main');
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 5, 0, 0);
     await client.putFile('stats.json', '{}', 'Update stats', 'STALE_SHA');
 
     const puts = calls.filter((c) => c.method === 'PUT');
@@ -42,7 +42,7 @@ describe('GitHubClient.putFile conflict retry', () => {
   it('does not retry on non-conflict errors (e.g. 401 unauthorized)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(401, { message: 'bad credentials' })));
 
-    const client = new GitHubClient('bad-token', 'owner', 'repo', 'main');
+    const client = new GitHubClient('bad-token', 'owner', 'repo', 'main', 5, 0, 0);
     await expect(client.putFile('stats.json', '{}', 'Update stats')).rejects.toThrow(/401/);
   });
 
@@ -52,7 +52,69 @@ describe('GitHubClient.putFile conflict retry', () => {
       return jsonResponse(200, { content: Buffer.from('x').toString('base64'), sha: 'FRESH_SHA' });
     }));
 
-    const client = new GitHubClient('token', 'owner', 'repo', 'main');
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 3, 0, 0);
     await expect(client.putFile('stats.json', '{}', 'Update stats', 'STALE_SHA')).rejects.toThrow(/409/);
+  });
+});
+
+describe('GitHubClient transient 5xx, 429, and network retry', () => {
+  it('retries on 503 Service Unavailable and succeeds when next attempt passes', async () => {
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        return jsonResponse(503, { message: 'No server is currently available to service your request.' });
+      }
+      return jsonResponse(200, {});
+    }));
+
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 3, 0, 0);
+    await client.putFile('organized/Array/LC128/LC128.java', 'class Solution {}', 'Add solution');
+
+    expect(attempts).toBe(2);
+  });
+
+  it('retries on 429 Too Many Requests and succeeds', async () => {
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        return jsonResponse(429, { message: 'Rate limit exceeded' });
+      }
+      return jsonResponse(200, {});
+    }));
+
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 3, 0, 0);
+    await client.putFile('organized/Array/LC128/LC128.java', 'class Solution {}', 'Add solution');
+
+    expect(attempts).toBe(2);
+  });
+
+  it('retries on network failure and succeeds when next attempt passes', async () => {
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new TypeError('Failed to fetch');
+      }
+      return jsonResponse(200, {});
+    }));
+
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 3, 0, 0);
+    await client.putFile('organized/Array/LC128/LC128.java', 'class Solution {}', 'Add solution');
+
+    expect(attempts).toBe(2);
+  });
+
+  it('throws 503 error after exhausting max retries', async () => {
+    let attempts = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempts++;
+      return jsonResponse(503, { message: 'Service Unavailable' });
+    }));
+
+    const client = new GitHubClient('token', 'owner', 'repo', 'main', 3, 0, 0);
+    await expect(client.putFile('test.java', 'code', 'msg')).rejects.toThrow(/503/);
+    expect(attempts).toBe(4); // 1 initial attempt + 3 retries
   });
 });

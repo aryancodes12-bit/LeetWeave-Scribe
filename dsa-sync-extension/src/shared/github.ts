@@ -18,11 +18,16 @@ export class GitHubApiError extends Error {
  * strategy; proper OAuth App flow is a planned follow-up, not this iteration).
  */
 export class GitHubClient {
+  private lastWriteTime = 0;
+
   constructor(
     private token: string,
     private owner: string,
     private repo: string,
     private branch: string,
+    private maxRetries = 5,
+    private initialDelayMs = 1000,
+    private writeIntervalMs = 1000,
   ) {}
 
   private headers(): HeadersInit {
@@ -33,11 +38,55 @@ export class GitHubClient {
     };
   }
 
+  private async fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+    let lastError: Error | null = null;
+    let delay = this.initialDelayMs;
+
+    for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      try {
+        const res = await fetch(url, init);
+        const isTransientStatus = res.status === 429 || (res.status >= 500 && res.status <= 599);
+
+        if (isTransientStatus) {
+          const bodyText = await safeText(res);
+          lastError = new GitHubApiError(
+            `${init?.method || 'GET'} ${url} failed: ${res.status} ${bodyText}`,
+            res.status,
+          );
+          if (attempt < this.maxRetries) {
+            const retryAfterHeader = res.headers?.get?.('retry-after');
+            const retryAfterMs = retryAfterHeader ? parseInt(retryAfterHeader, 10) * 1000 : 0;
+            const waitTime = Math.max(delay, isNaN(retryAfterMs) ? 0 : retryAfterMs);
+            if (waitTime > 0) {
+              await new Promise((resolve) => setTimeout(resolve, waitTime));
+            }
+            delay *= 2;
+            continue;
+          }
+          throw lastError;
+        }
+        return res;
+      } catch (err) {
+        if (err instanceof GitHubApiError) {
+          throw err;
+        }
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt < this.maxRetries) {
+          if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+          delay *= 2;
+          continue;
+        }
+        throw lastError;
+      }
+    }
+    throw lastError ?? new Error('Request failed after retries');
+  }
+
   /** Returns null if the file doesn't exist yet (404) — that's an expected case
    *  (first sync of a new file), not an error. */
   async getFile(path: string): Promise<GitHubFile | null> {
     const url = `https://api.github.com/repos/${this.owner}/${this.repo}/contents/${encodePath(path)}?ref=${this.branch}`;
-    const res = await fetch(url, { headers: this.headers() });
+    const res = await this.fetchWithRetry(url, { headers: this.headers() });
 
     if (res.status === 404) return null;
     if (!res.ok) {
@@ -70,9 +119,21 @@ export class GitHubClient {
     }
   }
 
+  private async paceWriteRequest(): Promise<void> {
+    if (this.writeIntervalMs <= 0) return;
+    const now = Date.now();
+    const timeSinceLastWrite = now - this.lastWriteTime;
+    if (timeSinceLastWrite < this.writeIntervalMs) {
+      const waitTime = this.writeIntervalMs - timeSinceLastWrite;
+      await new Promise((resolve) => setTimeout(resolve, waitTime));
+    }
+    this.lastWriteTime = Date.now();
+  }
+
   private async attemptPut(path: string, content: string, message: string, sha?: string): Promise<void> {
+    await this.paceWriteRequest();
     const url = `https://api.github.com/repos/${this.owner}/${this.repo}/contents/${encodePath(path)}`;
-    const res = await fetch(url, {
+    const res = await this.fetchWithRetry(url, {
       method: 'PUT',
       headers: { ...this.headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({
