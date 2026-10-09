@@ -1,6 +1,16 @@
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 export type OrganizationMode = 'topic' | 'difficulty' | 'custom';
 
+export interface ProblemApproaches {
+  optimal: string;
+  better?: string;
+  brute?: string;
+  aiGenerated?: {
+    better?: boolean;
+    brute?: boolean;
+  };
+}
+
 export interface ProblemMetadata {
   id: number;
   slug: string;
