@@ -237,3 +237,74 @@ function buildNotesPrompt(metadata: ProblemMetadata): string {
  * Calls Gemini to generate a specific approach (Brute or Better) code
  * based on the optimal solution.
  */
+export async function generateApproachCode(params: {
+  metadata: ProblemMetadata;
+  approachType: 'Brute' | 'Better';
+  optimalCode: string;
+  language: string;
+  apiKey: string;
+  model?: string;
+  backoffMs?: number;
+}): Promise<{ ok: true; code: string } | { ok: false; reason: string }> {
+  const { metadata, approachType, optimalCode, language, apiKey, model = DEFAULT_GEMINI_MODEL } = params;
+
+  if (!apiKey || !apiKey.trim()) {
+    return { ok: false, reason: 'invalid key' };
+  }
+
+  const prompt = [
+    `You are an expert algorithm programmer.`,
+    `Write the ${approachType} approach solution for LeetCode ${metadata.id}: ${metadata.title}.`,
+    `Language: ${language}`,
+    '',
+    `Here is the Optimal solution for reference:`,
+    '```' + language,
+    optimalCode,
+    '```',
+    '',
+    `Requirements:`,
+    `- Output ONLY the raw executable ${language} code for the ${approachType} solution.`,
+    `- Do NOT include markdown code fences (\`\`\`).`,
+    `- Do NOT include explanatory text or greetings.`,
+    `- Follow standard LeetCode class/method signature.`,
+  ].join('\n');
+
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey.trim(),
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      }),
+    });
+
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'invalid key' };
+      if (res.status === 429) return { ok: false, reason: 'rate limited' };
+      if (res.status === 404) return { ok: false, reason: 'model not found' };
+      return { ok: false, reason: `API error (${res.status})` };
+    }
+
+    const data = await res.json();
+    let text: string =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+      data?.candidates?.[0]?.output ??
+      '';
+
+    // Strip any accidental markdown fences if returned
+    text = text.replace(/^```[a-zA-Z0-9_-]*\n/, '').replace(/\n```\s*$/, '').trim();
+
+    if (!text) {
+      return { ok: false, reason: 'empty response' };
+    }
+
+    return { ok: true, code: text };
+  } catch (err) {
+    return { ok: false, reason: 'network' };
+  }
+}
