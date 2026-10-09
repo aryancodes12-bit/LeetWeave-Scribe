@@ -19,6 +19,23 @@ export interface GeminiNotesApproach {
   space: string;
 }
 
+export interface GeminiNotesData {
+  patternTag: string;
+  problemSummary: string;
+  example: {
+    input: string;
+    output: string;
+  };
+  keyInsights: string[];
+  approaches: GeminiNotesApproach[];
+  edgeCases: string[];
+  similarProblems: string[];
+}
+
+export type GeminiResult =
+  | { ok: true; data: GeminiNotesData }
+  | { ok: false; reason: string };
+
 export interface CustomRule {
   topic: string;
   path: string;
