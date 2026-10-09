@@ -20,6 +20,34 @@ export interface ProblemMetadata {
   url: string;
   language: string;
   code: string;
+  approaches?: ProblemApproaches;
+}
+
+export interface CustomRule {
+  topic: string;
+  path: string;
+}
+
+export interface ExtensionConfig {
+  repoOwner: string;
+  repoName: string;
+  branch: string;
+  destinationRoot: string;
+  organization: OrganizationMode;
+  rules: CustomRule[];
+  fallbackFolder: string;
+  namingPattern: string;
+  githubToken: string;
+  /** User-entered Google Gemini API key stored in chrome.storage */
+  geminiApiKey?: string;
+  /** Configurable Gemini model, default 'gemini-2.5-flash' */
+  geminiModel?: string;
+  /** Auto-push countdown in seconds, default 8 */
+  autoPushSeconds?: number;
+  /** Enable synthesized WebAudio sound effects */
+  soundEnabled?: boolean;
+  /** WebAudio volume (0.0 to 1.0), default 0.5 */
+  soundVolume?: number;
 }
 
 export interface GeminiNotesApproach {
@@ -45,28 +73,6 @@ export interface GeminiNotesData {
 export type GeminiResult =
   | { ok: true; data: GeminiNotesData }
   | { ok: false; reason: string };
-
-export interface CustomRule {
-  topic: string;
-  path: string;
-}
-
-export interface ExtensionConfig {
-  repoOwner: string;
-  repoName: string;
-  branch: string;
-  destinationRoot: string;
-  organization: OrganizationMode;
-  rules: CustomRule[];
-  fallbackFolder: string;
-  namingPattern: string;
-  githubToken: string;
-  /** Optional — user-entered in the popup, stored the same way as githubToken.
-   *  Falls back to the build-time GROQ_API_KEY (.env) constant if left empty. */
-  geminiApiKey?: string;
-  geminiModel?: string;
-  autoPushSeconds?: number;
-}
 
 export interface SyncedProblem {
   id: number;
