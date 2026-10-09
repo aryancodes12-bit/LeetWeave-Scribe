@@ -1,20 +1,6 @@
 import * as esbuild from 'esbuild';
 import { cpSync, mkdirSync, existsSync } from 'node:fs';
 
-// Node 20.6+ built-in .env loader — no dependency needed. Safe no-op if the
-// file doesn't exist (e.g. CI, or a machine that hasn't set up a key yet).
-if (existsSync('.env')) {
-  process.loadEnvFile('.env');
-}
-
-const groqApiKey = process.env.GROQ_API_KEY ?? '';
-if (!groqApiKey) {
-  console.warn(
-    '⚠️  No GROQ_API_KEY found (checked .env and environment). Building without it — ' +
-      'per-problem READMEs will ship without AI notes until you add one and rebuild.',
-  );
-}
-
 const outdir = 'dist';
 
 mkdirSync(outdir, { recursive: true });
@@ -50,9 +36,6 @@ await esbuild.build({
   minify: false,
   sourcemap: true,
   loader: { '.json': 'json' },
-  define: {
-    __GROQ_API_KEY__: JSON.stringify(groqApiKey),
-  },
 });
 
 cpSync('manifest.json', `${outdir}/manifest.json`);
