@@ -4,9 +4,12 @@ import {
   renderCompactReadme,
   renderFullBlock,
   renderCompactBlock,
+  renderGeminiNotesReadme,
+  renderFailedNotesReadme,
+  hasExistingAiNotes,
 } from '../src/shared/readme.js';
 import { emptyStats } from '../src/shared/stats.js';
-import type { SyncStats } from '../src/shared/types.js';
+import type { GeminiNotesData, ProblemMetadata, SyncStats } from '../src/shared/types.js';
 
 const MARKER_START = '<!-- dsa-sync:start -->';
 const MARKER_END = '<!-- dsa-sync:end -->';
@@ -29,6 +32,34 @@ function makeStats(overrides: Partial<SyncStats> = {}): SyncStats {
 }
 
 const STATS = makeStats();
+
+function makeMetadata(): ProblemMetadata {
+  return {
+    id: 283,
+    slug: 'move-zeroes',
+    title: 'Move Zeroes',
+    difficulty: 'Easy',
+    topics: ['Array', 'Two Pointers'],
+    url: 'https://leetcode.com/problems/move-zeroes/',
+    language: 'java',
+    code: 'class Solution {}',
+  };
+}
+
+function makeNotes(): GeminiNotesData {
+  return {
+    patternTag: 'Two Pointers',
+    problemSummary: 'Move all zeroes to the end of array in-place.',
+    example: { input: '[0,1,0,3,12]', output: '[1,3,12,0,0]' },
+    keyInsights: ['Use two pointers to partition non-zero elements.'],
+    approaches: [
+      { name: 'Brute', idea: 'Extra array', time: 'O(n)', space: 'O(n)' },
+      { name: 'Optimal', idea: 'Two-pointer swap', time: 'O(n)', space: 'O(1)' },
+    ],
+    edgeCases: ['Array with all zeroes'],
+    similarProblems: ['Remove Element'],
+  };
+}
 
 describe('renderFullBlock vs renderCompactBlock structure', () => {
   it('renderFullBlock output contains the Recent Solutions table header; renderCompactBlock output does not', () => {
@@ -112,5 +143,45 @@ describe('idempotency', () => {
     const endCount = (secondRun.match(/<!-- dsa-sync:end -->/g) || []).length;
     expect(startCount).toBe(1);
     expect(endCount).toBe(1);
+  });
+});
+
+describe('Gemini technical notes README renderer', () => {
+  it('renders complete structured Markdown template', () => {
+    const meta = makeMetadata();
+    const notes = makeNotes();
+    const rendered = renderGeminiNotesReadme(meta, notes);
+
+    expect(rendered).toContain('# 283. Move Zeroes');
+    expect(rendered).toContain('**Difficulty:** Easy');
+    expect(rendered).toContain('**Pattern:** Two Pointers');
+    expect(rendered).toContain('## Problem');
+    expect(rendered).toContain(notes.problemSummary);
+    expect(rendered).toContain('## Example');
+    expect(rendered).toContain('- **Input:** `[0,1,0,3,12]`');
+    expect(rendered).toContain('## Key Insights');
+    expect(rendered).toContain('## Approaches');
+    expect(rendered).toContain('| Brute | Extra array | `O(n)` | `O(n)` |');
+    expect(rendered).toContain('| Optimal | Two-pointer swap | `O(n)` | `O(1)` |');
+    expect(rendered).toContain('## Edge Cases');
+    expect(rendered).toContain('## Similar Problems');
+  });
+
+  it('renders fallback when notes generation fails', () => {
+    const meta = makeMetadata();
+    const failed = renderFailedNotesReadme(meta, 'rate limited');
+
+    expect(failed).toContain('# 283. Move Zeroes');
+    expect(failed).toContain('_AI notes generation unavailable: rate limited_');
+    expect(failed).not.toContain('## Key Insights');
+  });
+
+  it('detects existing AI notes correctly', () => {
+    const existingWithAi = '# 283. Move Zeroes\n\n## Key Insights\n- insight';
+    expect(hasExistingAiNotes(existingWithAi)).toBe(true);
+
+    const fallbackWithoutAi = '# 283. Move Zeroes\n\n_AI notes generation unavailable: invalid key_';
+    expect(hasExistingAiNotes(fallbackWithoutAi)).toBe(false);
+    expect(hasExistingAiNotes(null)).toBe(false);
   });
 });

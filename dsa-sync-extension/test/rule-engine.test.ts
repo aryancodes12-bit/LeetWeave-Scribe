@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveDestinationFolder, resolveFileName } from '../src/shared/rule-engine.js';
+import {
+  resolveDestinationFolder,
+  resolveFileName,
+  resolveApproachFileName,
+  getCommentPrefix,
+} from '../src/shared/rule-engine.js';
 import { lookupProblemBySlug } from '../src/shared/dataset.js';
 import { languageToExtension } from '../src/shared/language.js';
 import type { ExtensionConfig, ProblemMetadata } from '../src/shared/types.js';
@@ -78,6 +83,42 @@ describe('resolveFileName (ported)', () => {
     expect(resolveFileName(makeMetadata(), makeConfig({ namingPattern: '{title}' }))).toBe(
       'MoveZeroes.java',
     );
+  });
+});
+
+describe('resolveApproachFileName', () => {
+  it('preserves unchanged path for optimal approach', () => {
+    const config = makeConfig({ namingPattern: 'LC{id}' });
+    expect(resolveApproachFileName(makeMetadata(), config, 'optimal')).toBe('LC283.java');
+  });
+
+  it('appends _Better for better approach before file extension', () => {
+    const config = makeConfig({ namingPattern: 'LC{id}' });
+    expect(resolveApproachFileName(makeMetadata(), config, 'better')).toBe('LC283_Better.java');
+  });
+
+  it('appends _Brute for brute approach before file extension', () => {
+    const config = makeConfig({ namingPattern: 'LC{id}' });
+    expect(resolveApproachFileName(makeMetadata(), config, 'brute')).toBe('LC283_Brute.java');
+  });
+});
+
+describe('getCommentPrefix', () => {
+  it('returns // for Java, C++, JS, TS', () => {
+    expect(getCommentPrefix('java')).toBe('//');
+    expect(getCommentPrefix('cpp')).toBe('//');
+    expect(getCommentPrefix('typescript')).toBe('//');
+  });
+
+  it('returns # for Python and Ruby', () => {
+    expect(getCommentPrefix('python3')).toBe('#');
+    expect(getCommentPrefix('python')).toBe('#');
+    expect(getCommentPrefix('rb')).toBe('#');
+  });
+
+  it('returns -- for SQL', () => {
+    expect(getCommentPrefix('sql')).toBe('--');
+    expect(getCommentPrefix('mysql')).toBe('--');
   });
 });
 
