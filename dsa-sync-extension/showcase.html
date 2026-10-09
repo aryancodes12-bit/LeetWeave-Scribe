@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeetWeave Scribe — Glassmorphic Design Showcase</title>
+  <style>
+    :root {
+      --bg: #090717;
+      --card-bg: rgba(255, 255, 255, 0.05);
+      --border: rgba(255, 255, 255, 0.15);
+      --teal: #2dd4bf;
+      --violet: #8b5cf6;
+      --blue: #3b82f6;
+      --green: #3fb950;
+      --red: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 40px 24px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Ambient background lighting */
+    .bg-orb {
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(80px);
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+    }
+    .orb-a { width: 350px; height: 350px; background: #8b5cf6; top: -100px; left: -100px; }
+    .orb-b { width: 300px; height: 300px; background: #2dd4bf; bottom: 50px; right: -50px; }
+    .orb-c { width: 280px; height: 280px; background: #3b82f6; top: 40%; left: 30%; }
+
+    .content-wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 1200px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 48px;
+    }
+
+    .hero-title {
+      text-align: center;
+    }
+    h1 {
+      font-size: 32px;
+      font-weight: 800;
+      margin: 0 0 12px;
+      background: linear-gradient(135deg, #2dd4bf, #a78bfa, #60a5fa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.02em;
+    }
+    p.subtitle {
+      font-size: 15px;
+      color: rgba(255, 255, 255, 0.7);
+      margin: 0 auto;
+      max-width: 600px;
+      line-height: 1.5;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #ffffff;
+      margin: 0 0 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+      padding-bottom: 8px;
+      width: 100%;
+    }
+
+    .grid-duo {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 32px;
+      width: 100%;
+      justify-items: center;
+    }
+
+    .preview-card-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .preview-badge {
+      font-size: 11.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--teal);
+      background: rgba(45, 212, 191, 0.15);
+      border: 1px solid rgba(45, 212, 191, 0.35);
+      padding: 4px 12px;
+      border-radius: 9999px;
+    }
+
+    .popup-frame {
+      width: 360px;
+      height: 560px;
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.2);
+    }
+    .popup-frame iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+
+    /* LeetCode Mock background for Toast states */
+    .leetcode-canvas-preview {
+      width: 100%;
+      min-height: 380px;
+      background: #1a1a1a;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 20px;
+      padding: 30px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Mock LeetCode code editor in background */
+    .lc-editor-bg {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      bottom: 20px;
+      background: #282828;
+      border-radius: 12px;
+      border: 1px solid #333;
+      padding: 20px;
+      font-family: ui-monospace, "SF Mono", monospace;
+      font-size: 12px;
+      color: #9cdcfe;
+      line-height: 1.6;
+      opacity: 0.45;
+      pointer-events: none;
+    }
+
+    .toast-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 32px;
+      width: 100%;
+      justify-items: center;
+    }
+
+    /* Glass Toast Mockups */
+    .mock-toast {
+      width: 360px;
+      background: rgba(20, 18, 48, 0.82);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 18px;
+      box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+      padding: 16px;
+      color: #ffffff;
+      position: relative;
+      z-index: 2;
+    }
+
+    .mock-toast.syncing {
+      border: 1px solid transparent;
+      background: linear-gradient(rgba(20, 18, 48, 0.88), rgba(20, 18, 48, 0.88)) padding-box,
+                  linear-gradient(135deg, #8b5cf6, #3b82f6, #2dd4bf, #8b5cf6) border-box;
+      background-size: 100% 100%, 300% 300%;
+      animation: borderSweep 6s ease infinite;
+    }
+
+    .mock-toast.success {
+      border-color: rgba(63, 185, 80, 0.45);
+      box-shadow: 0 14px 44px rgba(0,0,0,0.5), 0 0 24px rgba(63, 185, 80, 0.35), inset 0 1px 0 rgba(255,255,255,0.3);
+    }
+
+    .mock-toast.error {
+      border-color: rgba(239, 68, 68, 0.55);
+      box-shadow: 0 14px 44px rgba(0,0,0,0.5), 0 0 24px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
+
+    @keyframes borderSweep {
+      0% { background-position: 0% 0%, 0% 50%; }
+      50% { background-position: 0% 0%, 100% 50%; }
+      100% { background-position: 0% 0%, 0% 50%; }
+    }
+
+    /* Toast inner components */
+    .toast-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px; }
+    .toast-title { font-size: 13.5px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .toast-subtitle { font-size: 11.5px; color: rgba(255,255,255,0.7); margin-top: 2px; }
+    
+    .toast-step-list { display: flex; flex-direction: column; gap: 10px; }
+    .toast-step { display: flex; align-items: center; gap: 12px; }
+    .toast-indicator {
+      width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center;
+      justify-content: center; font-size: 11px; font-weight: 700;
+      background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2);
+      color: rgba(255, 255, 255, 0.6);
+    }
+    .toast-indicator.done {
+      background: #2ea043; border-color: #3fb950; color: #fff; box-shadow: 0 0 10px rgba(63, 185, 80, 0.5);
+    }
+    .toast-indicator.active {
+      background: rgba(139, 92, 246, 0.25); border-color: #8b5cf6; color: #fff; box-shadow: 0 0 14px rgba(139, 92, 246, 0.6);
+    }
+    .toast-step-label { font-size: 12.5px; font-weight: 600; color: #fff; }
+    .toast-step-sub { font-size: 10.5px; color: rgba(255, 255, 255, 0.6); }
+
+    .badge-pill {
+      font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px;
+      background: rgba(63, 185, 80, 0.2); color: #4ade80; border: 1px solid rgba(63, 185, 80, 0.4);
+      display: inline-block;
+    }
+    .folder-link {
+      display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+      color: #60a5fa; text-decoration: none; margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-orb orb-a"></div>
+  <div class="bg-orb orb-b"></div>
+  <div class="bg-orb orb-c"></div>
+
+  <div class="content-wrap">
+    <div class="hero-title">
+      <h1>LeetWeave Scribe — Glassmorphic Design System</h1>
+      <p class="subtitle">Complete visual presentation of the frosted glass popup and the in-page Shadow DOM HUD overlaying LeetCode.</p>
+    </div>
+
+    <!-- Section 1: Extension Popup (Dashboard & Settings) -->
+    <div class="section-title">
+      <span>📱</span> Popup Interface: Dashboard &amp; Settings
+    </div>
+    <div class="grid-duo">
+      <div class="preview-card-wrap">
+        <div class="preview-badge">Dashboard View</div>
+        <div class="popup-frame" id="dash-frame">
+          <iframe id="iframe-dash" src="dist/popup/popup.html"></iframe>
+        </div>
+      </div>
+
+      <div class="preview-card-wrap">
+        <div class="preview-badge">Settings View</div>
+        <div class="popup-frame" id="settings-frame">
+          <iframe id="iframe-settings" src="dist/popup/popup.html"></iframe>
+        </div>
+      </div>
+    </div>
+
+    <!-- Section 2: In-Page Toast HUD States -->
+    <div class="section-title">
+      <span>✨</span> In-Page HUD Toast States (Shadow DOM over LeetCode)
+    </div>
+    <div class="toast-grid">
+      <!-- Syncing State -->
+      <div class="preview-card-wrap">
+        <div class="preview-badge" style="color:#a78bfa;background:rgba(139,92,246,0.15);border-color:rgba(139,92,246,0.35);">1. Syncing (Border Sweep + Stepper)</div>
+        <div class="mock-toast syncing">
+          <div class="toast-header">
+            <span style="font-size:18px;">⚡</span>
+            <div>
+              <div class="toast-title">Syncing with GitHub...</div>
+              <div class="toast-subtitle">Move Zeroes (LC283)</div>
+            </div>
+          </div>
+          <div class="toast-step-list">
+            <div class="toast-step">
+              <div class="toast-indicator done">✓</div>
+              <div><div class="toast-step-label">Submitting</div><div class="toast-step-sub">Connected to repo</div></div>
+            </div>
+            <div class="toast-step">
+              <div class="toast-indicator done">✓</div>
+              <div><div class="toast-step-label">Pushing code</div><div class="toast-step-sub">Optimal solution pushed</div></div>
+            </div>
+            <div class="toast-step">
+              <div class="toast-indicator active">⏳</div>
+              <div><div class="toast-step-label">Writing notes</div><div class="toast-step-sub">Generating Gemini technical notes...</div></div>
+            </div>
+            <div class="toast-step">
+              <div class="toast-indicator">4</div>
+              <div><div class="toast-step-label">Updating stats</div><div class="toast-step-sub">Syncing progress and READMEs</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Success State -->
+      <div class="preview-card-wrap">
+        <div class="preview-badge" style="color:#4ade80;background:rgba(63,185,80,0.15);border-color:rgba(63,185,80,0.35);">2. Success (Green Glow + Confetti)</div>
+        <div class="mock-toast success">
+          <div class="toast-header">
+            <div style="width:32px;height:32px;border-radius:50%;background:rgba(63,185,80,0.25);border:1px solid rgba(63,185,80,0.5);color:#4ade80;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;box-shadow:0 0 14px rgba(63,185,80,0.4);">✓</div>
+            <div>
+              <div class="toast-title" style="color:#4ade80;">Pushed to GitHub!</div>
+              <div class="toast-subtitle">Move Zeroes (Easy)</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin:8px 0;">
+            <span class="badge-pill">✓ Optimal</span>
+            <span class="badge-pill">✓ Better</span>
+            <span class="badge-pill">✓ Brute</span>
+          </div>
+          <a href="#" class="folder-link">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1.75 1A1.75 1.75 0 0 0 0 2.75v10.5C0 14.216.784 15 1.75 15h12.5A1.75 1.75 0 0 0 16 13.25v-8.5A1.75 1.75 0 0 0 14.25 3H7.5a.25.25 0 0 1-.2-.1l-.9-1.2A1.75 1.75 0 0 0 4.9 1H1.75Z"/></svg>
+            View Solution &amp; Notes on GitHub →
+          </a>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div class="preview-card-wrap">
+        <div class="preview-badge" style="color:#f87171;background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.35);">3. Error (Red Glow + Shake)</div>
+        <div class="mock-toast error">
+          <div class="toast-header">
+            <div style="width:32px;height:32px;border-radius:50%;background:rgba(239,68,68,0.25);border:1px solid rgba(239,68,68,0.5);color:#f87171;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;box-shadow:0 0 14px rgba(239,68,68,0.4);">✕</div>
+            <div>
+              <div class="toast-title" style="color:#f87171;">Sync Failed</div>
+              <div class="toast-subtitle">GitHub API rate limit exceeded. Please wait 1m.</div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+            <button style="padding:6px 12px;border-radius:8px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#fff;cursor:pointer;">Dismiss</button>
+            <button style="padding:6px 12px;border-radius:8px;background:linear-gradient(135deg,#2ea043,#238636);border:1px solid rgba(255,255,255,0.3);color:#fff;cursor:pointer;font-weight:600;">Retry</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Automatically switch the second iframe to settings tab
+    const settingsFrame = document.getElementById('iframe-settings');
+    settingsFrame.addEventListener('load', () => {
+      try {
+        const doc = settingsFrame.contentDocument || settingsFrame.contentWindow.document;
+        const settingsTab = doc.getElementById('nav-tab-settings');
+        if (settingsTab) {
+          setTimeout(() => settingsTab.click(), 300);
+        }
+      } catch (e) {}
+    });
+  </script>
+</body>
+</html>
