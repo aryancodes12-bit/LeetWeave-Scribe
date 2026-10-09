@@ -21,7 +21,7 @@
     "type": "module"
   },
   "permissions": ["storage", "scripting"],
-  "host_permissions": ["https://leetcode.com/*", "https://api.github.com/*", "https://api.groq.com/*"],
+  "host_permissions": ["https://leetcode.com/*", "https://api.github.com/*", "https://generativelanguage.googleapis.com/*"],
   "content_scripts": [
     {
       "matches": ["https://leetcode.com/problems/*"],
