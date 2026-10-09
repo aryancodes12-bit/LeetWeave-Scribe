@@ -47,3 +47,13 @@ export function resolveFileName(metadata: ProblemMetadata, config: ExtensionConf
 
   return `${base}.${metadata.language}`;
 }
+
+export function resolveApproachFileName(metadata: ProblemMetadata, config: ExtensionConfig, approach: 'optimal' | 'better' | 'brute'): string {
+  const defaultFile = resolveFileName(metadata, config);
+  if (approach === 'optimal') return defaultFile;
+  const dotIdx = defaultFile.lastIndexOf('.');
+  if (dotIdx === -1) return `${defaultFile}_${approach === 'better' ? 'Better' : 'Brute'}`;
+  const base = defaultFile.slice(0, dotIdx);
+  const ext = defaultFile.slice(dotIdx);
+  return `${base}_${approach === 'better' ? 'Better' : 'Brute'}${ext}`;
+}
