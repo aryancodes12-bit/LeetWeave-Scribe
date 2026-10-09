@@ -1,37 +1,56 @@
 import { lookupProblemBySlug } from '../shared/dataset.js';
 import { languageToExtension } from '../shared/language.js';
-import type { ProblemMetadata } from '../shared/types.js';
+import type { ExtensionConfig, ProblemApproaches, ProblemMetadata } from '../shared/types.js';
+import { LwsShadowUI } from './ui.js';
+import { initAudioContext } from './sound.js';
 
 const EVENT_NAME = 'lws:accepted';
 
 interface AcceptedEventDetail {
+  slug: string;
   lang: string;
   code: string;
   runtime: string | null;
   memory: string | null;
+  snapshots?: string[];
 }
+
+interface StepUpdateMessage {
+  type: 'DSA_STEP_UPDATE';
+  step: 'submitting' | 'pushing' | 'notes' | 'stats';
+  status: 'active' | 'done';
+  detail?: string;
+}
+
+const ui = new LwsShadowUI();
+
+// Prime the WebAudio AudioContext on page interactions
+window.addEventListener('click', initAudioContext, { passive: true });
 
 function getSlugFromUrl(): string | null {
   const match = window.location.pathname.match(/^\/problems\/([^/]+)\/?/);
   return match?.[1] ?? null;
 }
 
+// Listen for background step updates
+chrome.runtime.onMessage.addListener((message: StepUpdateMessage) => {
+  if (message.type === 'DSA_STEP_UPDATE') {
+    ui.updateStep(message.step, message.status, message.detail);
+  }
+});
+
 window.addEventListener(EVENT_NAME, (event) => {
   const detail = (event as CustomEvent<AcceptedEventDetail>).detail;
   handleAccepted(detail).catch((err) => {
     if (isContextInvalidatedError(err)) {
-      // Happens whenever the extension was reloaded/updated while this LeetCode
-      // tab was already open — the content script is orphaned from the old
-      // instance. Not a real failure; refreshing the page reconnects it.
       console.warn('[LWS] Extension was reloaded — refresh this page to keep syncing.');
-      showToast({
-        status: 'error',
-        message: 'Extension updated — refresh this page to keep syncing.',
+      ui.showError({
+        message: 'Extension was updated — please refresh this LeetCode tab.',
       });
       return;
     }
     console.error('[LWS] failed to handle accepted submission:', err);
-    showToast({ status: 'error', message: 'Sync failed — see console for details.' });
+    ui.showError({ message: 'Sync failed — see console for details.' });
   });
 });
 
@@ -46,14 +65,23 @@ function isContextInvalidatedError(err: unknown): boolean {
 }
 
 async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
-  const slug = getSlugFromUrl();
+  const slug = detail.slug || getSlugFromUrl();
   if (!slug) return;
 
   const info = lookupProblemBySlug(slug);
   if (!info) {
-    showToast({
-      status: 'error',
+    ui.showError({
       message: `"${slug}" isn't in the bundled problem dataset yet — skipped.`,
+    });
+    return;
+  }
+
+  const stored = await chrome.storage.local.get('config');
+  const config = stored.config as ExtensionConfig | undefined;
+
+  if (!config || !config.githubToken || !config.repoOwner || !config.repoName) {
+    ui.showError({
+      message: "LeetWeave Scribe isn't configured yet — click the extension icon to connect a repo.",
     });
     return;
   }
@@ -69,100 +97,74 @@ async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
     code: detail.code,
   };
 
-  showToast({ status: 'syncing', message: metadata.title });
+  const snapshots = detail.snapshots ?? [];
 
-  if (!chrome?.runtime?.sendMessage) {
-    throw new Error('Extension context invalidated: chrome.runtime is unavailable');
-  }
+  const onGenerateApproach = async (
+    type: 'Brute' | 'Better',
+  ): Promise<{ ok: true; code: string } | { ok: false; reason: string }> => {
+    return new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'DSA_GENERATE_APPROACH',
+          metadata,
+          approachType: type,
+        },
+        (res) => {
+          if (chrome.runtime?.lastError) {
+            resolve({ ok: false, reason: chrome.runtime.lastError.message ?? 'Request failed' });
+            return;
+          }
+          resolve(res ?? { ok: false, reason: 'No response from background' });
+        },
+      );
+    });
+  };
 
-  chrome.runtime.sendMessage({ type: 'DSA_SYNC_ACCEPTED', metadata }, (response) => {
-    if (chrome.runtime?.lastError) {
-      showToast({ status: 'error', message: chrome.runtime.lastError.message ?? 'Sync failed.' });
-      return;
-    }
-    if (response?.ok) {
-      showToast({
-        status: 'success',
-        message: `${metadata.title} synced to your repo`,
-        detail: response.path,
-      });
-    } else {
-      showToast({ status: 'error', message: response?.error ?? 'Sync failed.' });
-    }
+  const onPush = (approaches: ProblemApproaches) => {
+    metadata.approaches = approaches;
+
+    chrome.runtime.sendMessage(
+      {
+        type: 'DSA_SYNC_ACCEPTED',
+        metadata,
+      },
+      (response) => {
+        if (chrome.runtime?.lastError) {
+          ui.showError({
+            message: chrome.runtime.lastError.message ?? 'Sync failed.',
+            onRetry: () => onPush(approaches),
+            soundEnabled: config.soundEnabled,
+            soundVolume: config.soundVolume,
+          });
+          return;
+        }
+
+        if (response?.ok) {
+          const folderUrl = `https://github.com/${config.repoOwner}/${config.repoName}/tree/${config.branch}/${config.destinationRoot}/${response.folderPath}`;
+          ui.showSuccess({
+            metadata,
+            folderUrl,
+            aiFailureReason: response.aiFailureReason,
+            soundEnabled: config.soundEnabled,
+            soundVolume: config.soundVolume,
+          });
+        } else {
+          ui.showError({
+            message: response?.error ?? 'Sync failed.',
+            onRetry: () => onPush(approaches),
+            soundEnabled: config.soundEnabled,
+            soundVolume: config.soundVolume,
+          });
+        }
+      },
+    );
+  };
+
+  ui.showAcceptedPanel({
+    metadata,
+    snapshots,
+    config,
+    onPush,
+    onGenerateApproach,
   });
-}
-
-// --- Minimal toast UI, matching the earlier mockup, injected without a framework ---
-
-interface ToastOptions {
-  status: 'syncing' | 'success' | 'error';
-  message: string;
-  detail?: string;
-}
-
-function showToast(options: ToastOptions): void {
-  const existing = document.getElementById('lws-toast');
-  existing?.remove();
-
-  const toast = document.createElement('div');
-  toast.id = 'lws-toast';
-  toast.setAttribute(
-    'style',
-    [
-      'position:fixed',
-      'bottom:24px',
-      'right:24px',
-      'width:320px',
-      'background:#fff',
-      'border-radius:10px',
-      'box-shadow:0 8px 28px rgba(0,0,0,.22)',
-      'border:1px solid #d0d7de',
-      'padding:14px 16px',
-      'font-family:-apple-system,Segoe UI,sans-serif',
-      'font-size:12.5px',
-      'color:#1f2328',
-      'z-index:2147483647',
-      'animation:lws-slide-in .35s ease-out',
-    ].join(';'),
-  );
-
-  if (!document.getElementById('lws-toast-style')) {
-    const style = document.createElement('style');
-    style.id = 'lws-toast-style';
-    style.textContent = `
-      @keyframes lws-slide-in {
-        from { transform: translateY(12px); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
-      }
-    `;
-    document.head.appendChild(style);
-  }
-
-  const color = options.status === 'error' ? '#c0362c' : '#1a7f37';
-  const bg = options.status === 'error' ? '#ffebe9' : '#dafbe1';
-  const icon = options.status === 'error' ? '✕' : options.status === 'syncing' ? '…' : '✓';
-  const title = options.status === 'error' ? 'Sync failed' : options.status === 'syncing' ? 'Syncing...' : 'Pushed to GitHub';
-
-  toast.innerHTML = `
-    <div style="display:flex;gap:12px;">
-      <div style="width:32px;height:32px;border-radius:8px;background:${bg};color:${color};display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-size:15px;">${icon}</div>
-      <div style="line-height:1.45;">
-        <strong style="display:block;font-size:13px;color:#1f2328;margin-bottom:2px;">${escapeHtml(title)}</strong>
-        <span style="color:#59636e;">${escapeHtml(options.message)}</span>
-        ${options.detail ? `<div style="font-family:monospace;font-size:11px;color:#59636e;background:#f6f8fa;padding:2px 6px;border-radius:4px;display:inline-block;margin-top:4px;">${escapeHtml(options.detail)}</div>` : ''}
-      </div>
-    </div>
-  `;
-
-  document.body.appendChild(toast);
-
-  if (options.status !== 'syncing') {
-    setTimeout(() => toast.remove(), 6000);
-  }
-}
-
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
