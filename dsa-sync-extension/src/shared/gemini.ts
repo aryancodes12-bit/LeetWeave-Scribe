@@ -2,63 +2,238 @@ import type { GeminiNotesData, GeminiResult, ProblemMetadata } from './types.js'
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
 export const GEMINI_NOTES_SCHEMA = {
-  "type": "OBJECT",
-  "properties": {
-    "patternTag": {
-      "type": "STRING"
+  type: 'OBJECT',
+  properties: {
+    patternTag: {
+      type: 'STRING',
+      description: 'The algorithmic pattern or technique (e.g. Two Pointers, Sliding Window, DFS).',
     },
-    "problemSummary": {
-      "type": "STRING"
+    problemSummary: {
+      type: 'STRING',
+      description: 'Clear problem summary in your own words, maximum 2 sentences.',
     },
-    "example": {
-      "type": "OBJECT",
-      "properties": {
-        "input": {
-          "type": "STRING"
+    example: {
+      type: 'OBJECT',
+      properties: {
+        input: { type: 'STRING', description: 'Sample input representation' },
+        output: { type: 'STRING', description: 'Sample expected output' },
+      },
+      required: ['input', 'output'],
+    },
+    keyInsights: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: '2 to 3 concise, high-value insights or takeaways.',
+    },
+    approaches: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: {
+            type: 'STRING',
+            enum: ['Brute', 'Better', 'Optimal'],
+            description: 'The tier of this approach.',
+          },
+          idea: { type: 'STRING', description: 'Core idea in 1-2 concise sentences.' },
+          time: { type: 'STRING', description: 'Big-O time complexity (e.g. O(n)).' },
+          space: { type: 'STRING', description: 'Big-O space complexity (e.g. O(1)).' },
         },
-        "output": {
-          "type": "STRING"
-        }
-      }
+        required: ['name', 'idea', 'time', 'space'],
+      },
+      description: 'Approaches for this problem, reflecting submitted code and standard DSA solutions.',
     },
-    "keyInsights": {
-      "type": "ARRAY",
-      "items": {
-        "type": "STRING"
-      }
+    edgeCases: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: '3 to 4 critical edge cases to keep in mind.',
     },
-    "approaches": {
-      "type": "ARRAY",
-      "items": {
-        "type": "OBJECT",
-        "properties": {
-          "name": {
-            "type": "STRING"
-          },
-          "idea": {
-            "type": "STRING"
-          },
-          "time": {
-            "type": "STRING"
-          },
-          "space": {
-            "type": "STRING"
-          }
-        }
-      }
+    similarProblems: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: 'Up to 3 similar LeetCode problem titles.',
     },
-    "edgeCases": {
-      "type": "ARRAY",
-      "items": {
-        "type": "STRING"
-      }
-    },
-    "similarProblems": {
-      "type": "ARRAY",
-      "items": {
-        "type": "STRING"
-      }
-    }
-  }
+  },
+  required: [
+    'patternTag',
+    'problemSummary',
+    'example',
+    'keyInsights',
+    'approaches',
+    'edgeCases',
+    'similarProblems',
+  ],
 };
+
+/**
+ * Generates structured technical notes for a solved problem via Google Gemini's
+ * generateContent API using structured JSON output (responseSchema).
+ * Returns a discriminated result { ok: true, data } | { ok: false, reason }.
+ * Automatically retries once on 429 or 5xx with backoff.
+ */
+export async function generateNotes(
+  metadata: ProblemMetadata,
+  apiKey: string,
+  model: string = DEFAULT_GEMINI_MODEL,
+  backoffMs = 1000,
+): Promise<GeminiResult> {
+  if (!apiKey || !apiKey.trim()) {
+    return { ok: false, reason: 'invalid key' };
+  }
+
+  const prompt = buildNotesPrompt(metadata);
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+
+  const requestBody = {
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: GEMINI_NOTES_SCHEMA,
+    },
+  };
+
+  const executeCall = async (): Promise<{ res?: Response; error?: unknown }> => {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey.trim(),
+        },
+        body: JSON.stringify(requestBody),
+      });
+      return { res };
+    } catch (error) {
+      return { error };
+    }
+  };
+
+  let attempt = await executeCall();
+
+  // Retry once on 429 or 5xx with backoff
+  if (attempt.res && (attempt.res.status === 429 || attempt.res.status >= 500)) {
+    if (backoffMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+    attempt = await executeCall();
+  }
+
+  if (attempt.error || !attempt.res) {
+    return { ok: false, reason: 'network' };
+  }
+
+  const res = attempt.res;
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return { ok: false, reason: 'invalid key' };
+    }
+    if (res.status === 429) {
+      return { ok: false, reason: 'rate limited' };
+    }
+    if (res.status === 404) {
+      return { ok: false, reason: 'model not found' };
+    }
+    if (res.status >= 500) {
+      return { ok: false, reason: 'server error' };
+    }
+    return { ok: false, reason: `API error (${res.status})` };
+  }
+
+  try {
+    const rawData = await res.json();
+    const text =
+      rawData?.candidates?.[0]?.content?.parts?.[0]?.text ??
+      rawData?.candidates?.[0]?.output ??
+      '';
+
+    if (!text || typeof text !== 'string') {
+      return { ok: false, reason: 'bad JSON' };
+    }
+
+    const parsed = JSON.parse(text);
+
+    if (
+      !parsed ||
+      typeof parsed !== 'object' ||
+      typeof parsed.patternTag !== 'string' ||
+      typeof parsed.problemSummary !== 'string' ||
+      !parsed.example ||
+      !Array.isArray(parsed.keyInsights) ||
+      !Array.isArray(parsed.approaches) ||
+      !Array.isArray(parsed.edgeCases) ||
+      !Array.isArray(parsed.similarProblems)
+    ) {
+      return { ok: false, reason: 'bad JSON' };
+    }
+
+    return { ok: true, data: parsed as GeminiNotesData };
+  } catch {
+    return { ok: false, reason: 'bad JSON' };
+  }
+}
+
+function buildNotesPrompt(metadata: ProblemMetadata): string {
+  const parts: string[] = [
+    `You are an expert Data Structures & Algorithms educator.`,
+    `Analyze this solved problem and produce concise, high-signal technical notes.`,
+    `Problem: ${metadata.id}. ${metadata.title}`,
+    `Difficulty: ${metadata.difficulty}`,
+    `Topics: ${metadata.topics.join(', ') || 'N/A'}`,
+    `Language: ${metadata.language}`,
+    `URL: ${metadata.url}`,
+    '',
+    'Optimal submitted code:',
+    '```' + metadata.language,
+    metadata.code,
+    '```',
+  ];
+
+  if (metadata.approaches?.better) {
+    parts.push(
+      '',
+      'Better approach code:',
+      '```' + metadata.language,
+      metadata.approaches.better,
+      '```',
+    );
+  }
+
+  if (metadata.approaches?.brute) {
+    parts.push(
+      '',
+      'Brute approach code:',
+      '```' + metadata.language,
+      metadata.approaches.brute,
+      '```',
+    );
+  }
+
+  parts.push(
+    '',
+    'Instructions:',
+    '1. problemSummary: Maximum 2 sentences in your own words. No filler words.',
+    '2. patternTag: State the primary algorithmic pattern.',
+    '3. example: Realistic minimal example with input and output.',
+    '4. keyInsights: 2 to 3 bullet points explaining the core aha moments.',
+    '5. approaches: Analyze the actual code provided. If better or brute was provided, evaluate them; otherwise include standard Brute/Better/Optimal progression for this problem. Keep ideas concise (1-2 sentences).',
+    '6. edgeCases: 3 to 4 critical boundary conditions.',
+    '7. similarProblems: Up to 3 problem titles.',
+    'Keep every sentence punchy. No paragraph longer than 2 sentences.',
+  );
+
+  return parts.join('\n');
+}
+
+/**
+ * Calls Gemini to generate a specific approach (Brute or Better) code
+ * based on the optimal solution.
+ */
