@@ -1,9 +1,18 @@
-import { resolveDestinationFolder, resolveFileName } from '../shared/rule-engine.js';
+import {
+  resolveDestinationFolder,
+  resolveApproachFileName,
+  getCommentPrefix,
+} from '../shared/rule-engine.js';
 import { applySolvedProblem, emptyStats } from '../shared/stats.js';
-import { renderRootReadme, renderCompactReadme } from '../shared/readme.js';
+import {
+  renderRootReadme,
+  renderCompactReadme,
+  renderGeminiNotesReadme,
+  renderFailedNotesReadme,
+  hasExistingAiNotes,
+} from '../shared/readme.js';
 import { GitHubClient, GitHubApiError } from '../shared/github.js';
-import { generateExplanation } from '../shared/groq.js';
-import { GROQ_API_KEY } from '../shared/env.js';
+import { generateNotes, generateApproachCode, DEFAULT_GEMINI_MODEL } from '../shared/gemini.js';
 import type { ExtensionConfig, ProblemMetadata, SyncStats } from '../shared/types.js';
 
 interface AcceptedMessage {
@@ -11,14 +20,18 @@ interface AcceptedMessage {
   metadata: ProblemMetadata;
 }
 
-/**
- * Chrome only auto-injects content scripts into tabs opened AFTER the extension
- * loads. A LeetCode tab that was already open before an extension reload/update
- * keeps running the OLD content script until the page is refreshed — this is
- * what causes "sync doesn't fire until I reload the page." Re-inject fresh
- * copies into every currently-open matching tab on install/update/startup so
- * that manual refresh usually isn't necessary.
- */
+interface GenerateApproachMessage {
+  type: 'DSA_GENERATE_APPROACH';
+  metadata: ProblemMetadata;
+  approachType: 'Brute' | 'Better';
+}
+
+interface RegenerateNotesMessage {
+  type: 'DSA_REGENERATE_NOTES';
+}
+
+type ExtensionMessage = AcceptedMessage | GenerateApproachMessage | RegenerateNotesMessage;
+
 async function reinjectIntoOpenTabs(): Promise<void> {
   try {
     const tabs = await chrome.tabs.query({ url: 'https://leetcode.com/problems/*' });
@@ -35,8 +48,6 @@ async function reinjectIntoOpenTabs(): Promise<void> {
           files: ['content/content.js'],
         });
       } catch (err) {
-        // A single tab failing to accept injection (e.g. a chrome:// error page,
-        // or the tab closing mid-loop) shouldn't stop the rest from succeeding.
         console.warn(`[LWS] Could not re-inject into tab ${tab.id}:`, err);
       }
     }
@@ -52,25 +63,49 @@ chrome.runtime.onStartup.addListener(() => {
   reinjectIntoOpenTabs();
 });
 
-chrome.runtime.onMessage.addListener((message: AcceptedMessage, _sender, sendResponse) => {
-  if (message.type !== 'DSA_SYNC_ACCEPTED') return false;
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse) => {
+  if (message.type === 'DSA_SYNC_ACCEPTED') {
+    const tabId = sender.tab?.id;
+    syncProblem(message.metadata, tabId)
+      .then((res) => sendResponse({ ok: true, ...res }))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[LWS] sync failed:', err);
+        sendResponse({ ok: false, error: msg });
+      });
+    return true;
+  }
 
-  syncProblem(message.metadata)
-    .then((path) => sendResponse({ ok: true, path }))
-    .catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error('[LWS] sync failed:', err);
-      sendResponse({ ok: false, error: msg });
-    });
+  if (message.type === 'DSA_GENERATE_APPROACH') {
+    handleGenerateApproach(message.metadata, message.approachType)
+      .then((res) => sendResponse(res))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendResponse({ ok: false, reason: msg });
+      });
+    return true;
+  }
 
-  return true; // keep the message channel open for the async response
+  if (message.type === 'DSA_REGENERATE_NOTES') {
+    handleRegenerateNotes()
+      .then((res) => sendResponse(res))
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        sendResponse({ ok: false, reason: msg });
+      });
+    return true;
+  }
+
+  return false;
 });
 
 async function loadConfig(): Promise<ExtensionConfig> {
   const stored = await chrome.storage.local.get('config');
   const config = stored.config as ExtensionConfig | undefined;
   if (!config || !config.githubToken || !config.repoOwner || !config.repoName) {
-    throw new Error('LeetWeave Scribe isn\'t configured yet — open the extension popup and connect a repo.');
+    throw new Error(
+      "LeetWeave Scribe isn't configured yet — open the extension popup and connect a repo.",
+    );
   }
   return config;
 }
@@ -81,71 +116,164 @@ async function loadStats(client: GitHubClient, statsPath: string): Promise<SyncS
   try {
     return { ...emptyStats(), ...JSON.parse(file.content) };
   } catch {
-    return emptyStats(); // corrupted stats file should never block a sync
+    return emptyStats();
   }
 }
 
-export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
+function sendStep(
+  tabId: number | undefined,
+  step: 'submitting' | 'pushing' | 'notes' | 'stats',
+  status: 'active' | 'done',
+  detail?: string,
+): void {
+  if (tabId === undefined) return;
+  chrome.tabs
+    .sendMessage(tabId, {
+      type: 'DSA_STEP_UPDATE',
+      step,
+      status,
+      detail,
+    })
+    .catch(() => {
+      // Tab may have navigated or closed
+    });
+}
+
+export async function syncProblem(
+  metadata: ProblemMetadata,
+  tabId?: number,
+): Promise<{ path: string; folderPath: string; aiFailureReason: string | null }> {
   const startedAt = Date.now();
+
+  // Step 1: Submitting
+  sendStep(tabId, 'submitting', 'active');
   const config = await loadConfig();
-  const client = new GitHubClient(config.githubToken, config.repoOwner, config.repoName, config.branch);
+  const client = new GitHubClient(
+    config.githubToken,
+    config.repoOwner,
+    config.repoName,
+    config.branch,
+  );
+  sendStep(tabId, 'submitting', 'done');
 
   const folder = resolveDestinationFolder(metadata, config);
-  const fileName = resolveFileName(metadata, config);
-  // One subfolder per problem (matches LeetHub's own layout) rather than a flat
-  // topic folder — at 100+ problems, a flat folder mixing .java and .md files
-  // becomes unreadable. Notes file is named README.md specifically so GitHub
-  // auto-renders it the moment the folder is opened, not just when clicked into.
-  const problemFolder = fileName.replace(/\.[^./]+$/, '');
-  const solutionPath = `${config.destinationRoot}/${folder}/${problemFolder}/${fileName}`;
-  const explanationPath = `${config.destinationRoot}/${folder}/${problemFolder}/README.md`;
+  const optimalFileName = resolveApproachFileName(metadata, config, 'optimal');
+  const problemFolder = optimalFileName.replace(/\.[^./]+$/, '');
+  const baseDir = `${config.destinationRoot}/${folder}/${problemFolder}`;
+
+  const optimalSolutionPath = `${baseDir}/${optimalFileName}`;
+  const explanationPath = `${baseDir}/README.md`;
   const statsPath = `${config.destinationRoot}/stats.json`;
   const readmePath = `${config.destinationRoot}/README.md`;
-  const rootReadmePath = 'README.md'; // the actual top-level repo README, distinct from the one inside destinationRoot
+  const rootReadmePath = 'README.md';
 
-  // 1. Push the solution file (create or update — check for existing sha first).
-  const existingSolution = await client.getFile(solutionPath).catch((err) => {
+  // Step 2: Pushing code
+  sendStep(tabId, 'pushing', 'active');
+
+  const commentPrefix = getCommentPrefix(metadata.language);
+
+  // 2a. Optimal code
+  const existingOptimal = await client.getFile(optimalSolutionPath).catch((err) => {
     if (err instanceof GitHubApiError && err.status === 404) return null;
     throw err;
   });
   await client.putFile(
-    solutionPath,
+    optimalSolutionPath,
     metadata.code,
-    `Add LC${metadata.id} - ${metadata.title}`,
-    existingSolution?.sha,
+    `Add LC${metadata.id} - ${metadata.title} (Optimal)`,
+    existingOptimal?.sha,
   );
 
-  // 2. Per-problem README — always generated (title, difficulty, topics, link).
-  //    If a Groq key is configured, we also try to fetch an Approach/Complexity
-  //    section written against the actual submitted code. That call is fully
-  //    isolated: any failure (bad key, rate limit, network) just means the
-  //    README ships without the AI section — it never blocks the README itself,
-  //    and never blocks the rest of the sync (solution push already happened above).
-  {
-    let aiSection: string | null = null;
-    const groqKey = config.groqApiKey || GROQ_API_KEY;
-    if (groqKey) {
-      try {
-        aiSection = await generateExplanation(metadata, groqKey);
-      } catch (err) {
-        console.warn('[LWS] AI explanation step failed, README will ship without it:', err);
+  // 2b. Better code (if provided)
+  const betterCode = metadata.approaches?.better?.trim();
+  if (betterCode) {
+    const betterFileName = resolveApproachFileName(metadata, config, 'better');
+    const betterPath = `${baseDir}/${betterFileName}`;
+    const isAi = metadata.approaches?.aiGenerated?.better;
+    const content = isAi
+      ? `${commentPrefix} AI-generated, not verified on LeetCode\n\n${betterCode}`
+      : betterCode;
+
+    const existingBetter = await client.getFile(betterPath).catch(() => null);
+    await client.putFile(
+      betterPath,
+      content,
+      `Add LC${metadata.id} - ${metadata.title} (Better)`,
+      existingBetter?.sha,
+    );
+  }
+
+  // 2c. Brute code (if provided)
+  const bruteCode = metadata.approaches?.brute?.trim();
+  if (bruteCode) {
+    const bruteFileName = resolveApproachFileName(metadata, config, 'brute');
+    const brutePath = `${baseDir}/${bruteFileName}`;
+    const isAi = metadata.approaches?.aiGenerated?.brute;
+    const content = isAi
+      ? `${commentPrefix} AI-generated, not verified on LeetCode\n\n${bruteCode}`
+      : bruteCode;
+
+    const existingBrute = await client.getFile(brutePath).catch(() => null);
+    await client.putFile(
+      brutePath,
+      content,
+      `Add LC${metadata.id} - ${metadata.title} (Brute)`,
+      existingBrute?.sha,
+    );
+  }
+
+  sendStep(tabId, 'pushing', 'done');
+
+  // Step 3: Writing notes
+  sendStep(tabId, 'notes', 'active');
+
+  let aiFailureReason: string | null = null;
+  const existingExplanation = await client.getFile(explanationPath).catch(() => null);
+  const alreadyHasNotes = hasExistingAiNotes(existingExplanation?.content);
+
+  const apiKey = config.geminiApiKey?.trim();
+  const model = config.geminiModel?.trim() || DEFAULT_GEMINI_MODEL;
+
+  let explanationBody: string | null = null;
+
+  if (apiKey) {
+    const geminiRes = await generateNotes(metadata, apiKey, model);
+    if (geminiRes.ok) {
+      explanationBody = renderGeminiNotesReadme(metadata, geminiRes.data);
+    } else {
+      aiFailureReason = geminiRes.reason;
+      if (!alreadyHasNotes) {
+        explanationBody = renderFailedNotesReadme(metadata, geminiRes.reason);
       }
     }
+  } else {
+    aiFailureReason = 'Missing Gemini API key';
+    if (!alreadyHasNotes) {
+      explanationBody = renderFailedNotesReadme(
+        metadata,
+        'Add a Gemini API key in extension settings to auto-generate technical notes.',
+      );
+    }
+  }
 
-    const existingExplanation = await client.getFile(explanationPath).catch(() => null);
-    const body = renderExplanationFile(metadata, aiSection);
+  if (explanationBody !== null) {
     await client.putFile(
       explanationPath,
-      body,
+      explanationBody,
       `Add notes for LC${metadata.id} - ${metadata.title}`,
       existingExplanation?.sha,
     );
   }
 
-  // 3. Update stats.json
+  sendStep(tabId, 'notes', 'done', aiFailureReason ?? undefined);
+
+  // Step 4: Updating stats
+  sendStep(tabId, 'stats', 'active');
+
   const stats = await loadStats(client, statsPath);
   const automatedSeconds = (Date.now() - startedAt) / 1000;
   const updatedStats = applySolvedProblem(stats, metadata, automatedSeconds);
+
   const existingStatsFile = await client.getFile(statsPath).catch(() => null);
   await client.putFile(
     statsPath,
@@ -154,8 +282,6 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingStatsFile?.sha,
   );
 
-  // 4a. Update organized/README.md — full block (Progress heading + Recent Solutions table).
-  //     Marker-based: content outside <!-- dsa-sync:start/end --> is never touched.
   const existingReadme = await client.getFile(readmePath).catch(() => null);
   const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
   await client.putFile(
@@ -165,9 +291,6 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingReadme?.sha,
   );
 
-  // 4b. Update root README.md — compact block (summary line + streak + link to full log).
-  //     Only a one-liner so the hand-maintained topic index tables are never disturbed.
-  //     Content outside <!-- dsa-sync:start/end --> markers is preserved exactly.
   const existingRootReadme = await client.getFile(rootReadmePath).catch(() => null);
   const renderedRootReadme = renderCompactReadme(
     existingRootReadme?.content ?? null,
@@ -181,28 +304,82 @@ export async function syncProblem(metadata: ProblemMetadata): Promise<string> {
     existingRootReadme?.sha,
   );
 
-  await chrome.storage.local.set({ stats: updatedStats });
+  await chrome.storage.local.set({
+    stats: updatedStats,
+    lastSyncedMetadata: metadata,
+    lastSyncedPath: `${folder}/${problemFolder}`,
+  });
 
-  return solutionPath;
+  sendStep(tabId, 'stats', 'done');
+
+  return {
+    path: optimalSolutionPath,
+    folderPath: `${folder}/${problemFolder}`,
+    aiFailureReason,
+  };
 }
 
-function renderExplanationFile(metadata: ProblemMetadata, aiSection: string | null): string {
-  const lines = [
-    `# ${metadata.id}. ${metadata.title}`,
-    '',
-    `**Difficulty:** ${metadata.difficulty}  `,
-    `**Topics:** ${metadata.topics.join(', ') || 'N/A'}  `,
-    `**Link:** ${metadata.url}`,
-    '',
-    '---',
-    '',
-  ];
-
-  if (aiSection) {
-    lines.push(aiSection, '', '---', '_Approach notes generated automatically by LeetWeave Scribe._');
-  } else {
-    lines.push('_Add a Groq API key in the extension settings to auto-generate approach notes here._');
+async function handleGenerateApproach(
+  metadata: ProblemMetadata,
+  approachType: 'Brute' | 'Better',
+): Promise<{ ok: true; code: string } | { ok: false; reason: string }> {
+  const config = await loadConfig();
+  if (!config.geminiApiKey?.trim()) {
+    return { ok: false, reason: 'invalid key' };
   }
 
-  return lines.join('\n');
+  return generateApproachCode({
+    metadata,
+    approachType,
+    optimalCode: metadata.code,
+    language: metadata.language,
+    apiKey: config.geminiApiKey,
+    model: config.geminiModel,
+  });
+}
+
+async function handleRegenerateNotes(): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const stored = await chrome.storage.local.get(['config', 'lastSyncedMetadata']);
+  const config = stored.config as ExtensionConfig | undefined;
+  const metadata = stored.lastSyncedMetadata as ProblemMetadata | undefined;
+
+  if (!config || !config.githubToken || !config.repoOwner || !config.repoName) {
+    return { ok: false, reason: 'Extension is not configured yet.' };
+  }
+  if (!metadata) {
+    return { ok: false, reason: 'No recently synced problem found to regenerate notes for.' };
+  }
+  if (!config.geminiApiKey?.trim()) {
+    return { ok: false, reason: 'Please set your Gemini API key in settings first.' };
+  }
+
+  const model = config.geminiModel?.trim() || DEFAULT_GEMINI_MODEL;
+  const result = await generateNotes(metadata, config.geminiApiKey, model);
+  if (!result.ok) {
+    return { ok: false, reason: result.reason };
+  }
+
+  const client = new GitHubClient(
+    config.githubToken,
+    config.repoOwner,
+    config.repoName,
+    config.branch,
+  );
+
+  const folder = resolveDestinationFolder(metadata, config);
+  const optimalFileName = resolveApproachFileName(metadata, config, 'optimal');
+  const problemFolder = optimalFileName.replace(/\.[^./]+$/, '');
+  const explanationPath = `${config.destinationRoot}/${folder}/${problemFolder}/README.md`;
+
+  const existingExplanation = await client.getFile(explanationPath).catch(() => null);
+  const body = renderGeminiNotesReadme(metadata, result.data);
+
+  await client.putFile(
+    explanationPath,
+    body,
+    `Regenerate AI notes for LC${metadata.id} - ${metadata.title}`,
+    existingExplanation?.sha,
+  );
+
+  return { ok: true };
 }
