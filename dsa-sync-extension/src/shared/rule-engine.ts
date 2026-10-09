@@ -3,9 +3,7 @@ import type { ExtensionConfig, ProblemMetadata } from './types.js';
 /**
  * Same logic as dsa-sync CLI's core/rule-engine — kept behaviorally identical on
  * purpose, so a user who's used both the CLI and this extension gets the same
- * "Array" folder for the same problem either way. (Standalone copy for now since
- * the extension is a separate npm project; candidate for a shared workspace
- * package if this graduates beyond MVP.)
+ * "Array" folder for the same problem either way.
  */
 export function resolveDestinationFolder(
   metadata: ProblemMetadata,
@@ -48,12 +46,40 @@ export function resolveFileName(metadata: ProblemMetadata, config: ExtensionConf
   return `${base}.${metadata.language}`;
 }
 
-export function resolveApproachFileName(metadata: ProblemMetadata, config: ExtensionConfig, approach: 'optimal' | 'better' | 'brute'): string {
+/**
+ * Resolves the file name for a specific approach (optimal, better, brute).
+ * Optimal preserves the exact original filename for backwards compatibility.
+ * Better and Brute append _Better and _Brute suffixes before the extension.
+ */
+export function resolveApproachFileName(
+  metadata: ProblemMetadata,
+  config: ExtensionConfig,
+  approach: 'optimal' | 'better' | 'brute',
+): string {
   const defaultFile = resolveFileName(metadata, config);
   if (approach === 'optimal') return defaultFile;
+
   const dotIdx = defaultFile.lastIndexOf('.');
-  if (dotIdx === -1) return `${defaultFile}_${approach === 'better' ? 'Better' : 'Brute'}`;
+  if (dotIdx === -1) {
+    return `${defaultFile}_${approach === 'better' ? 'Better' : 'Brute'}`;
+  }
+
   const base = defaultFile.slice(0, dotIdx);
   const ext = defaultFile.slice(dotIdx);
-  return `${base}_${approach === 'better' ? 'Better' : 'Brute'}${ext}`;
+  const suffix = approach === 'better' ? '_Better' : '_Brute';
+  return `${base}${suffix}${ext}`;
+}
+
+/**
+ * Returns the line comment prefix for a given programming language.
+ */
+export function getCommentPrefix(language: string): string {
+  const lang = language.toLowerCase();
+  if (['py', 'python', 'python3', 'rb', 'ruby', 'sh', 'bash', 'r', 'pl', 'perl'].includes(lang)) {
+    return '#';
+  }
+  if (['sql', 'mysql', 'pgsql', 'postgresql', 'sqlite', 'oracle'].includes(lang)) {
+    return '--';
+  }
+  return '//';
 }
