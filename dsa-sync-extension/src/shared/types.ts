@@ -12,6 +12,13 @@ export interface ProblemMetadata {
   code: string;
 }
 
+export interface GeminiNotesApproach {
+  name: 'Brute' | 'Better' | 'Optimal';
+  idea: string;
+  time: string;
+  space: string;
+}
+
 export interface CustomRule {
   topic: string;
   path: string;
