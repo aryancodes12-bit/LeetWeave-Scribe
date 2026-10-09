@@ -65,6 +65,7 @@ export interface ExtensionConfig {
    *  Falls back to the build-time GROQ_API_KEY (.env) constant if left empty. */
   geminiApiKey?: string;
   geminiModel?: string;
+  autoPushSeconds?: number;
 }
 
 export interface SyncedProblem {
