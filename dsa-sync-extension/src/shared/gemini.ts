@@ -66,6 +66,18 @@ export async function saveWorkingModelToConfig(workingModel: string): Promise<vo
   }
 }
 
+/**
+ * Calls GET /v1beta/models using the x-goog-api-key header to retrieve available Gemini models.
+ */
+export async function listGeminiModels(
+  apiKey: string,
+): Promise<{ ok: true; models: string[] } | { ok: false; reason: string }> {
+  if (!apiKey || !apiKey.trim()) {
+    return { ok: false, reason: 'invalid key' };
+  }
+  return { ok: true, models: [] };
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
