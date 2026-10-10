@@ -72,7 +72,7 @@ export interface GeminiNotesData {
 
 export type GeminiResult =
   | { ok: true; data: GeminiNotesData; workingModel?: string }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; status?: number };
 
 export interface SyncedProblem {
   id: number;
