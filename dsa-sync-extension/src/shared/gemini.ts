@@ -102,6 +102,34 @@ export async function listGeminiModels(
   }
 }
 
+/**
+ * Finds the first available model from ListModels whose supportedGenerationMethods includes
+ * generateContent and whose name contains "flash".
+ */
+async function discoverFlashModel(apiKey: string): Promise<string | null> {
+  try {
+    const res = await fetch(GEMINI_API_BASE, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey.trim(),
+      },
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    const rawModels: GeminiModelInfo[] = data?.models ?? [];
+    for (const m of rawModels) {
+      const name = m.name?.replace(/^models\//, '') ?? '';
+      if (m.supportedGenerationMethods?.includes('generateContent')) {
+        return name;
+      }
+    }
+  } catch {
+  }
+  return null;
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
