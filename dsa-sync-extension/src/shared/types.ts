@@ -40,7 +40,7 @@ export interface ExtensionConfig {
   githubToken: string;
   /** User-entered Google Gemini API key stored in chrome.storage */
   geminiApiKey?: string;
-  /** Configurable Gemini model, default 'gemini-2.5-flash' */
+  /** Configurable Gemini model, default 'gemini-3.5-flash' */
   geminiModel?: string;
   /** Auto-push countdown in seconds, default 8 */
   autoPushSeconds?: number;
