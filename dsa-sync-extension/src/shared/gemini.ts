@@ -48,6 +48,22 @@ async function formatHttpFailureReason(res: Response, category: string): Promise
   return `[HTTP ${res.status}] ${category}`;
 }
 
+/**
+ * Saves a discovered working model name back to the chrome.storage extension configuration.
+ */
+export async function saveWorkingModelToConfig(workingModel: string): Promise<void> {
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      const stored = await chrome.storage.local.get('config');
+      if (stored?.config) {
+        const updatedConfig = { ...stored.config, geminiModel: workingModel };
+        await chrome.storage.local.set({ config: updatedConfig });
+      }
+    }
+  } catch {
+  }
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
