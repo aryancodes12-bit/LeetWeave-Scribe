@@ -5,6 +5,70 @@ export const FALLBACK_GEMINI_MODEL = 'gemini-flash-latest';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+export const GEMINI_NOTES_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    patternTag: {
+      type: 'STRING',
+      description: 'The algorithmic pattern or technique (e.g. Two Pointers, Sliding Window, DFS).',
+    },
+    problemSummary: {
+      type: 'STRING',
+      description: 'Clear problem summary in your own words, maximum 2 sentences.',
+    },
+    example: {
+      type: 'OBJECT',
+      properties: {
+        input: { type: 'STRING', description: 'Sample input representation' },
+        output: { type: 'STRING', description: 'Sample expected output' },
+      },
+      required: ['input', 'output'],
+    },
+    keyInsights: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: '2 to 3 concise, high-value insights or takeaways.',
+    },
+    approaches: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          name: {
+            type: 'STRING',
+            enum: ['Brute', 'Better', 'Optimal'],
+            description: 'The tier of this approach.',
+          },
+          idea: { type: 'STRING', description: 'Core idea in 1-2 concise sentences.' },
+          time: { type: 'STRING', description: 'Big-O time complexity (e.g. O(n)).' },
+          space: { type: 'STRING', description: 'Big-O space complexity (e.g. O(1)).' },
+        },
+        required: ['name', 'idea', 'time', 'space'],
+      },
+      description: 'Approaches for this problem, reflecting submitted code and standard DSA solutions.',
+    },
+    edgeCases: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: '3 to 4 critical edge cases to keep in mind.',
+    },
+    similarProblems: {
+      type: 'ARRAY',
+      items: { type: 'STRING' },
+      description: 'Up to 3 similar LeetCode problem titles.',
+    },
+  },
+  required: [
+    'patternTag',
+    'problemSummary',
+    'example',
+    'keyInsights',
+    'approaches',
+    'edgeCases',
+    'similarProblems',
+  ],
+};
+
 export interface GeminiModelInfo {
   name: string;
   displayName?: string;
@@ -32,6 +96,7 @@ async function extractGoogleErrorMessage(res: Response): Promise<string> {
       return (data as Record<string, any>).error.message.trim();
     }
   } catch {
+    // Response body not JSON or not readable
   }
   return '';
 }
@@ -129,6 +194,7 @@ async function discoverFlashModel(apiKey: string): Promise<string | null> {
       }
     }
   } catch {
+    // ListModels failed
   }
   return null;
 }
@@ -162,6 +228,7 @@ async function callGenerateContentEndpoint(
 
   let attempt = await doFetch();
 
+  // Retry once on 429 or 5xx with backoff
   if (attempt.res && (attempt.res.status === 429 || attempt.res.status >= 500)) {
     if (backoffMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
@@ -172,76 +239,17 @@ async function callGenerateContentEndpoint(
   return attempt;
 }
 
-
-export const GEMINI_NOTES_SCHEMA = {
-  type: 'OBJECT',
-  properties: {
-    patternTag: {
-      type: 'STRING',
-      description: 'The algorithmic pattern or technique (e.g. Two Pointers, Sliding Window, DFS).',
-    },
-    problemSummary: {
-      type: 'STRING',
-      description: 'Clear problem summary in your own words, maximum 2 sentences.',
-    },
-    example: {
-      type: 'OBJECT',
-      properties: {
-        input: { type: 'STRING', description: 'Sample input representation' },
-        output: { type: 'STRING', description: 'Sample expected output' },
-      },
-      required: ['input', 'output'],
-    },
-    keyInsights: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: '2 to 3 concise, high-value insights or takeaways.',
-    },
-    approaches: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: {
-          name: {
-            type: 'STRING',
-            enum: ['Brute', 'Better', 'Optimal'],
-            description: 'The tier of this approach.',
-          },
-          idea: { type: 'STRING', description: 'Core idea in 1-2 concise sentences.' },
-          time: { type: 'STRING', description: 'Big-O time complexity (e.g. O(n)).' },
-          space: { type: 'STRING', description: 'Big-O space complexity (e.g. O(1)).' },
-        },
-        required: ['name', 'idea', 'time', 'space'],
-      },
-      description: 'Approaches for this problem, reflecting submitted code and standard DSA solutions.',
-    },
-    edgeCases: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: '3 to 4 critical edge cases to keep in mind.',
-    },
-    similarProblems: {
-      type: 'ARRAY',
-      items: { type: 'STRING' },
-      description: 'Up to 3 similar LeetCode problem titles.',
-    },
-  },
-  required: [
-    'patternTag',
-    'problemSummary',
-    'example',
-    'keyInsights',
-    'approaches',
-    'edgeCases',
-    'similarProblems',
-  ],
-};
-
 /**
  * Generates structured technical notes for a solved problem via Google Gemini's
  * generateContent API using structured JSON output (responseSchema).
- * Returns a discriminated result { ok: true, data } | { ok: false, reason }.
- * Automatically retries once on 429 or 5xx with backoff.
+ * 
+ * If a 404 "model not found" occurs:
+ * 1. Automatically retries with "gemini-flash-latest".
+ * 2. If that also fails, queries GET /v1beta/models using x-goog-api-key,
+ *    picks the first model supporting generateContent whose name contains "flash",
+ *    and retries with it.
+ * 3. Saves the working model name back to config.
+ * 4. Includes HTTP status and Google's error.message in failure reasons.
  */
 export async function generateNotes(
   metadata: ProblemMetadata,
@@ -274,6 +282,7 @@ export async function generateNotes(
   if (attempt.res?.status === 404) {
     console.warn(`[LWS] Model "${currentModel}" returned 404. Attempting fallback...`);
 
+    // Fallback 1: Try gemini-flash-latest
     if (currentModel !== FALLBACK_GEMINI_MODEL) {
       const fallbackAttempt = await callGenerateContentEndpoint(
         FALLBACK_GEMINI_MODEL,
@@ -287,10 +296,9 @@ export async function generateNotes(
         currentModel = FALLBACK_GEMINI_MODEL;
         await saveWorkingModelToConfig(FALLBACK_GEMINI_MODEL);
       } else if (fallbackAttempt.res?.status === 404) {
-        attempt = fallbackAttempt;
+        attempt = fallbackAttempt; // update attempt with latest 404
       }
     }
-  }
 
     // Fallback 2: Query ListModels for the first flash model
     if (attempt.res?.status === 404) {
@@ -314,6 +322,7 @@ export async function generateNotes(
         }
       }
     }
+  }
 
   if (attempt.error || !attempt.res) {
     return { ok: false, reason: 'network' };
@@ -429,7 +438,7 @@ function buildNotesPrompt(metadata: ProblemMetadata): string {
 
 /**
  * Calls Gemini to generate a specific approach (Brute or Better) code
- * based on the optimal solution.
+ * based on the optimal solution. Supports 404 fallback chain as well.
  */
 export async function generateApproachCode(params: {
   metadata: ProblemMetadata;
@@ -439,8 +448,8 @@ export async function generateApproachCode(params: {
   apiKey: string;
   model?: string;
   backoffMs?: number;
-}): Promise<{ ok: true; code: string } | { ok: false; reason: string }> {
-  const { metadata, approachType, optimalCode, language, apiKey, model = DEFAULT_GEMINI_MODEL } = params;
+}): Promise<{ ok: true; code: string; workingModel?: string } | { ok: false; reason: string }> {
+  const { metadata, approachType, optimalCode, language, apiKey, backoffMs = 1000 } = params;
 
   if (!apiKey || !apiKey.trim()) {
     return { ok: false, reason: 'invalid key' };
@@ -463,42 +472,89 @@ export async function generateApproachCode(params: {
     `- Follow standard LeetCode class/method signature.`,
   ].join('\n');
 
-  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+  const requestBody = {
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+  };
 
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-goog-api-key': apiKey.trim(),
-      },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      }),
-    });
+  let currentModel = params.model?.trim() || DEFAULT_GEMINI_MODEL;
+  let attempt = await callGenerateContentEndpoint(currentModel, apiKey, requestBody, backoffMs);
 
-    if (!res.ok) {
-      if (res.status === 401 || res.status === 403) return { ok: false, reason: 'invalid key' };
-      if (res.status === 429) return { ok: false, reason: 'rate limited' };
-      if (res.status === 404) return { ok: false, reason: 'model not found' };
-      return { ok: false, reason: `API error (${res.status})` };
+  // 404 Fallback sequence
+  if (attempt.res?.status === 404) {
+    if (currentModel !== FALLBACK_GEMINI_MODEL) {
+      const fallbackAttempt = await callGenerateContentEndpoint(
+        FALLBACK_GEMINI_MODEL,
+        apiKey,
+        requestBody,
+        backoffMs,
+      );
+      if (fallbackAttempt.res?.ok) {
+        attempt = fallbackAttempt;
+        currentModel = FALLBACK_GEMINI_MODEL;
+        await saveWorkingModelToConfig(FALLBACK_GEMINI_MODEL);
+      } else if (fallbackAttempt.res?.status === 404) {
+        attempt = fallbackAttempt;
+      }
     }
 
+    if (attempt.res?.status === 404) {
+      const discoveredModel = await discoverFlashModel(apiKey);
+      if (discoveredModel && discoveredModel !== currentModel && discoveredModel !== FALLBACK_GEMINI_MODEL) {
+        const discoveredAttempt = await callGenerateContentEndpoint(
+          discoveredModel,
+          apiKey,
+          requestBody,
+          backoffMs,
+        );
+        if (discoveredAttempt.res?.ok) {
+          attempt = discoveredAttempt;
+          currentModel = discoveredModel;
+          await saveWorkingModelToConfig(discoveredModel);
+        } else {
+          attempt = discoveredAttempt;
+        }
+      }
+    }
+  }
+
+  if (attempt.error || !attempt.res) {
+    return { ok: false, reason: 'network' };
+  }
+
+  const res = attempt.res;
+
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      const reason = await formatHttpFailureReason(res, 'invalid key');
+      return { ok: false, reason };
+    }
+    if (res.status === 429) {
+      const reason = await formatHttpFailureReason(res, 'rate limited');
+      return { ok: false, reason };
+    }
+    if (res.status === 404) {
+      const reason = await formatHttpFailureReason(res, 'model not found');
+      return { ok: false, reason };
+    }
+    const reason = await formatHttpFailureReason(res, `API error (${res.status})`);
+    return { ok: false, reason };
+  }
+
+  try {
     const data = await res.json();
     let text: string =
       data?.candidates?.[0]?.content?.parts?.[0]?.text ??
       data?.candidates?.[0]?.output ??
       '';
 
-    // Strip any accidental markdown fences if returned
     text = text.replace(/^```[a-zA-Z0-9_-]*\n/, '').replace(/\n```\s*$/, '').trim();
 
     if (!text) {
       return { ok: false, reason: 'empty response' };
     }
 
-    return { ok: true, code: text };
-  } catch (err) {
-    return { ok: false, reason: 'network' };
+    return { ok: true, code: text, workingModel: currentModel };
+  } catch {
+    return { ok: false, reason: 'bad JSON' };
   }
 }
