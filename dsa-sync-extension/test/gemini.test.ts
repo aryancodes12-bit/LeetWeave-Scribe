@@ -163,6 +163,56 @@ describe('generateNotes (Google Gemini API integration)', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it('automatically retries with gemini-flash-latest on 404 and saves to config on success', async () => {
+    const validData = makeValidNotesData();
+    const chromeSetSpy = vi.fn().mockResolvedValue(undefined);
+    const chromeGetSpy = vi.fn().mockResolvedValue({
+      config: { geminiModel: 'gemini-3.5-flash', repoOwner: 'test' },
+    });
+    vi.stubGlobal('chrome', {
+      storage: {
+        local: {
+          get: chromeGetSpy,
+          set: chromeSetSpy,
+        },
+      },
+    });
+
+    const fetchSpy = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('gemini-3.5-flash:generateContent')) {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({
+            error: {
+              code: 404,
+              message: 'models/gemini-3.5-flash is not found for API version v1beta',
+              status: 'NOT_FOUND',
+            },
+          }),
+        } as Response;
+      }
+      if (url.includes('gemini-flash-latest:generateContent')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            candidates: [{ content: { parts: [{ text: JSON.stringify(validData) }] } }],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 500 } as Response;
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await generateNotes(makeMetadata(), 'test-api-key', 'gemini-3.5-flash', 0);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.workingModel).toBe('gemini-flash-latest');
+    }
+    expect(chromeSetSpy).toHaveBeenCalled();
+  });
+
   it('returns model not found on HTTP 404', async () => {
     vi.stubGlobal(
       'fetch',
