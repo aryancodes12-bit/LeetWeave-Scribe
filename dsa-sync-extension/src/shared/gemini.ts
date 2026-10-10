@@ -1,6 +1,7 @@
 import type { GeminiNotesData, GeminiResult, ProblemMetadata } from './types.js';
 
 export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+export const FALLBACK_GEMINI_MODEL = 'gemini-flash-latest';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
