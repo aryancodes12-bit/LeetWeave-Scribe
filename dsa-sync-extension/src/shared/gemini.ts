@@ -88,7 +88,14 @@ export async function listGeminiModels(
       const reason = await formatHttpFailureReason(res, 'failed to list models');
       return { ok: false, reason };
     }
-    return { ok: true, models: [] };
+
+    const data = await res.json();
+    const rawModels: GeminiModelInfo[] = data?.models ?? [];
+    const filtered = rawModels
+      .filter((m) => m.supportedGenerationMethods?.includes('generateContent'))
+      .map((m) => m.name.replace(/^models\//, ''));
+
+    return { ok: true, models: filtered };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, reason: `network: ${msg}` };
