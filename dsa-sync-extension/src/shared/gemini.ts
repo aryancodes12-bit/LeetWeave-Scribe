@@ -119,9 +119,12 @@ async function discoverFlashModel(apiKey: string): Promise<string | null> {
 
     const data = await res.json();
     const rawModels: GeminiModelInfo[] = data?.models ?? [];
+
     for (const m of rawModels) {
       const name = m.name?.replace(/^models\//, '') ?? '';
-      if (m.supportedGenerationMethods?.includes('generateContent')) {
+      const supportsGen = m.supportedGenerationMethods?.includes('generateContent');
+      const isFlash = name.toLowerCase().includes('flash') || (m.displayName?.toLowerCase().includes('flash') ?? false);
+      if (supportsGen && isFlash) {
         return name;
       }
     }
