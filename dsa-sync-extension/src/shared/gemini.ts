@@ -254,8 +254,6 @@ export async function generateNotes(
   }
 
   const prompt = buildNotesPrompt(metadata);
-  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
-
   const requestBody = {
     contents: [
       {
@@ -269,31 +267,8 @@ export async function generateNotes(
     },
   };
 
-  const executeCall = async (): Promise<{ res?: Response; error?: unknown }> => {
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey.trim(),
-        },
-        body: JSON.stringify(requestBody),
-      });
-      return { res };
-    } catch (error) {
-      return { error };
-    }
-  };
-
-  let attempt = await executeCall();
-
-  // Retry once on 429 or 5xx with backoff
-  if (attempt.res && (attempt.res.status === 429 || attempt.res.status >= 500)) {
-    if (backoffMs > 0) {
-      await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    }
-    attempt = await executeCall();
-  }
+  let currentModel = model?.trim() || DEFAULT_GEMINI_MODEL;
+  let attempt = await callGenerateContentEndpoint(currentModel, apiKey, requestBody, backoffMs);
 
   if (attempt.error || !attempt.res) {
     return { ok: false, reason: 'network' };
