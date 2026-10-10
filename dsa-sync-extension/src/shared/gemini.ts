@@ -75,7 +75,24 @@ export async function listGeminiModels(
   if (!apiKey || !apiKey.trim()) {
     return { ok: false, reason: 'invalid key' };
   }
-  return { ok: true, models: [] };
+
+  try {
+    const res = await fetch(GEMINI_API_BASE, {
+      method: 'GET',
+      headers: {
+        'x-goog-api-key': apiKey.trim(),
+      },
+    });
+
+    if (!res.ok) {
+      const reason = await formatHttpFailureReason(res, 'failed to list models');
+      return { ok: false, reason };
+    }
+    return { ok: true, models: [] };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, reason: `network: ${msg}` };
+  }
 }
 
 
