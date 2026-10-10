@@ -289,7 +289,12 @@ Groq key is **not** part of this — it's a build-time `.env` value, not user-en
 
 - **One core engine, two runtimes.** The rule engine, README generator, and stats logic are pure functions with zero I/O — the CLI and extension each have their own copy today (separate npm projects), but neither depends on Node-only or browser-only APIs, so behavior stays identical across both and either could import a shared package later without rewriting logic.
 - **Per-problem folders, not flat files.** Each solution gets its own subfolder (`Array/LC414/LC414.java` + `Array/LC414/README.md`) rather than a flat topic folder — stays browsable at 100+ problems, and `README.md` specifically auto-renders on GitHub when the folder is opened.
-- **Groq enrichment is fully isolated.** Wrapped in its own try/catch inside the sync pipeline — a bad key, rate limit, or Groq outage can never block the actual GitHub push, only skips the AI section of that one README. Verified with dedicated resilience tests (bad key, network failure, malformed response all correctly no-op rather than throw).
+- **Google Gemini structured generation & automated 404 fallback.**
+  1. Primary call uses `gemini-3.5-flash` with structured JSON schema (`responseSchema`).
+  2. On HTTP 404 ("model not found"), automatically retries once with `gemini-flash-latest`.
+  3. If still not found, queries `GET /v1beta/models` via `x-goog-api-key`, dynamically discovers the first model supporting `generateContent` with "flash" in its name, retries with it, and automatically saves the working model back to extension storage.
+  4. Failure reasons explicitly include the HTTP status and Google's `error.message` in the in-page toast and problem README.
+- **Glassmorphism UI redesign.** Dark frosted-glass surfaces over rich violet-blue gradients, drifting ambient blurred glowing orbs, sliding tab pill switches, count-up stat animations, and a Shadow DOM in-page progress stepper toast.
 - **Idempotent README regeneration.** The root README is fully regenerated on every sync rather than incrementally patched, using an HTML-comment marker block — avoids drift bugs, and preserves any hand-written content a user adds outside the markers.
 - **Measured, not guessed, efficiency metric.** The popup's "time saved" KPI uses a labeled estimate for the manual baseline (~3 min/problem) but subtracts *real, measured* automated sync time from it — the number is a running total built from actual data, not a one-time claim.
 
