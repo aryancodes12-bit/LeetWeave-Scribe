@@ -464,6 +464,40 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
       statusMsg.textContent = 'Enter a Gemini API key first to list models.';
       return;
     }
+
+    if (refreshBtn) {
+      refreshBtn.textContent = 'Fetching...';
+      refreshBtn.disabled = true;
+    }
+    statusMsg.className = 'status-msg';
+    statusMsg.textContent = 'Querying Google Gemini ListModels API...';
+
+    const listRes = await listGeminiModels(key);
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+    }
+
+    if (listRes.ok) {
+      statusMsg.className = 'status-msg success';
+      statusMsg.textContent = `✓ Fetched ${listRes.models.length} available models.`;
+      const prevVal = modelCustom.style.display !== 'none' ? modelCustom.value.trim() : modelSelect.value;
+      
+      modelSelect.innerHTML = '';
+      listRes.models.forEach((m) => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m === DEFAULT_GEMINI_MODEL ? `${m} (Default)` : m;
+        modelSelect.appendChild(opt);
+      });
+      const customOpt = document.createElement('option');
+      customOpt.value = '__custom__';
+      customOpt.textContent = 'Custom / Enter manually...';
+      modelSelect.appendChild(customOpt);
+    } else {
+      statusMsg.className = 'status-msg error';
+      statusMsg.textContent = `Failed to list models: ${listRes.reason}`;
+      if (refreshBtn) refreshBtn.textContent = '↻ Refresh';
+    }
   });
 
   // Mask toggle for Gemini Key
