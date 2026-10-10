@@ -2,7 +2,7 @@ import type { ExtensionConfig, ProblemMetadata, SyncStats } from '../shared/type
 import { emptyStats } from '../shared/types.js';
 import { getDifficultyTotals } from '../shared/dataset.js';
 import { ASSUMED_MANUAL_SECONDS_PER_PROBLEM } from '../shared/stats.js';
-import { listGeminiModels, DEFAULT_GEMINI_MODEL } from '../shared/gemini.js';
+import { DEFAULT_GEMINI_MODEL, listGeminiModels } from '../shared/gemini.js';
 
 const app = document.getElementById('app')!;
 const subtitle = document.getElementById('header-subtitle')!;
@@ -336,7 +336,6 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
           <option value="topic" ${existing?.organization === 'topic' ? 'selected' : ''}>Topic (Array, Two Pointers...)</option>
           <option value="difficulty" ${existing?.organization === 'difficulty' ? 'selected' : ''}>Difficulty (Easy, Medium, Hard)</option>
         </select>
-            <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
 
         <label for="fallbackFolder">Fallback Folder</label>
         <input id="fallbackFolder" placeholder="Uncategorized" value="${escapeAttr(existing?.fallbackFolder ?? 'Uncategorized')}" />
@@ -347,7 +346,6 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
           <option value="{title}" ${existing?.namingPattern === '{title}' ? 'selected' : ''}>{title} → MoveZeroes.java</option>
           <option value="{id}-{slug}" ${existing?.namingPattern === '{id}-{slug}' ? 'selected' : ''}>{id}-{slug} → 283-move-zeroes.java</option>
         </select>
-            <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
       </div>
 
       <!-- Section 2: Tokens & AI Keys -->
@@ -374,7 +372,7 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
         </p>
 
         <div class="form-row">
-          <div>
+          <div style="flex:1.4;">
             <div style="display:flex;align-items:center;justify-content:space-between;margin:9px 0 4px;">
               <label for="geminiModelSelect" style="margin:0;">Gemini Model</label>
               <button type="button" class="lws-btn-inline" id="refresh-models-btn" title="Refresh available models from Google API" style="font-size:10px;padding:2px 7px;">↻ Refresh</button>
@@ -390,8 +388,8 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
             </select>
             <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
           </div>
-          <div>
-            <label for="autoPushSeconds">Auto-push (seconds)</label>
+          <div style="flex:1;">
+            <label for="autoPushSeconds">Auto-push (s)</label>
             <input id="autoPushSeconds" type="number" min="0" max="60" value="${existing?.autoPushSeconds ?? 8}" />
           </div>
         </div>
@@ -555,6 +553,13 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
 
     const autoSec = parseInt(getValue('autoPushSeconds'), 10);
 
+    let chosenModel = DEFAULT_GEMINI_MODEL;
+    if (modelCustom && modelCustom.style.display !== 'none' && modelCustom.value.trim()) {
+      chosenModel = modelCustom.value.trim();
+    } else if (modelSelect && modelSelect.value && modelSelect.value !== '__custom__') {
+      chosenModel = modelSelect.value.trim();
+    }
+
     const newConfig: ExtensionConfig = {
       repoOwner: owner,
       repoName: name,
@@ -566,7 +571,7 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
       namingPattern: getValue('namingPattern') || 'LC{id}',
       githubToken: token,
       geminiApiKey: getValue('geminiApiKey'),
-      geminiModel: getValue('geminiModel') || DEFAULT_GEMINI_MODEL,
+      geminiModel: chosenModel,
       autoPushSeconds: isNaN(autoSec) ? 8 : Math.max(0, autoSec),
       soundEnabled: (document.getElementById('soundEnabled') as HTMLInputElement).checked,
       soundVolume: parseFloat(volSlider.value) || 0.5,
