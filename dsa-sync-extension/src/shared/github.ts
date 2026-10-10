@@ -1,3 +1,9 @@
+export interface CommitFileInput {
+  path: string;
+  content?: string;
+  sha?: string;
+}
+
 export interface GitHubFile {
   content: string; // decoded, plain text
   sha: string;
@@ -13,9 +19,9 @@ export class GitHubApiError extends Error {
 }
 
 /**
- * Minimal wrapper around the GitHub Contents API — just get + put, which is all
- * a browser-side sync needs. Uses a PAT via Authorization header (MVP auth
- * strategy; proper OAuth App flow is a planned follow-up, not this iteration).
+ * Client for GitHub repository operations.
+ * Supports file retrieval, legacy single-file PUTs with conflict retries,
+ * and atomic multi-file commits via the Git Data API.
  */
 export class GitHubClient {
   private lastWriteTime = 0;
@@ -82,6 +88,151 @@ export class GitHubClient {
     throw lastError ?? new Error('Request failed after retries');
   }
 
+  /**
+   * Creates an atomic commit for multiple files using the GitHub Git Data API:
+   * 1. GET ref/heads/{branch} to get latest base commit SHA
+   * 2. GET commits/{base_commit_sha} to get base tree SHA
+   * 3. POST git/blobs for each file in parallel with Promise.all
+   * 4. POST git/trees with base_tree and all new file blobs
+   * 5. POST git/commits with new tree and base commit as parent
+   * 6. PATCH git/refs/heads/{branch} to update the branch pointer
+   *
+   * Automatically retries once on 422 or 409 non-fast-forward by refetching the ref.
+   */
+  async commitFiles(files: CommitFileInput[], message: string): Promise<string> {
+    if (files.length === 0) {
+      throw new Error('commitFiles requires at least one file');
+    }
+
+    // Step 3: Create blobs in parallel
+    const blobEntries = await Promise.all(
+      files.map(async (file) => {
+        const blobSha = file.sha ?? (await this.createBlob(file.content ?? ''));
+        return {
+          path: file.path,
+          mode: '100644' as const,
+          type: 'blob' as const,
+          sha: blobSha,
+        };
+      }),
+    );
+
+    const attemptCommit = async (): Promise<string> => {
+      // Step 1: GET ref
+      const refUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/git/ref/heads/${encodeURIComponent(this.branch)}`;
+      const refRes = await this.fetchWithRetry(refUrl, { headers: this.headers() });
+      if (!refRes.ok) {
+        throw new GitHubApiError(
+          `GET ref heads/${this.branch} failed: ${refRes.status} ${await safeText(refRes)}`,
+          refRes.status,
+        );
+      }
+      const refData = await refRes.json();
+      const baseCommitSha: string = refData.object.sha;
+
+      // Step 2: GET base commit to find its tree SHA
+      const commitUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/git/commits/${baseCommitSha}`;
+      const commitRes = await this.fetchWithRetry(commitUrl, { headers: this.headers() });
+      if (!commitRes.ok) {
+        throw new GitHubApiError(
+          `GET commit ${baseCommitSha} failed: ${commitRes.status} ${await safeText(commitRes)}`,
+          commitRes.status,
+        );
+      }
+      const commitData = await commitRes.json();
+      const baseTreeSha: string = commitData.tree.sha;
+
+      // Step 4: POST git/trees with base_tree
+      const treeUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/git/trees`;
+      const treeRes = await this.fetchWithRetry(treeUrl, {
+        method: 'POST',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          base_tree: baseTreeSha,
+          tree: blobEntries,
+        }),
+      });
+      if (!treeRes.ok) {
+        throw new GitHubApiError(
+          `POST tree failed: ${treeRes.status} ${await safeText(treeRes)}`,
+          treeRes.status,
+        );
+      }
+      const treeData = await treeRes.json();
+      const newTreeSha: string = treeData.sha;
+
+      // Step 5: POST git/commits
+      const newCommitUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/git/commits`;
+      const newCommitRes = await this.fetchWithRetry(newCommitUrl, {
+        method: 'POST',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message,
+          tree: newTreeSha,
+          parents: [baseCommitSha],
+        }),
+      });
+      if (!newCommitRes.ok) {
+        throw new GitHubApiError(
+          `POST commit failed: ${newCommitRes.status} ${await safeText(newCommitRes)}`,
+          newCommitRes.status,
+        );
+      }
+      const newCommitData = await newCommitRes.json();
+      const newCommitSha: string = newCommitData.sha;
+
+      // Step 6: PATCH git/refs/heads/{branch}
+      const patchRefUrl = `https://api.github.com/repos/${this.owner}/${this.repo}/git/refs/heads/${encodeURIComponent(this.branch)}`;
+      const patchRes = await this.fetchWithRetry(patchRefUrl, {
+        method: 'PATCH',
+        headers: { ...this.headers(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sha: newCommitSha,
+          force: false,
+        }),
+      });
+      if (!patchRes.ok) {
+        throw new GitHubApiError(
+          `PATCH ref heads/${this.branch} failed: ${patchRes.status} ${await safeText(patchRes)}`,
+          patchRes.status,
+        );
+      }
+
+      return newCommitSha;
+    };
+
+    try {
+      return await attemptCommit();
+    } catch (err) {
+      if (err instanceof GitHubApiError && (err.status === 422 || err.status === 409)) {
+        // Refetch ref and retry once on non-fast-forward/conflict
+        return await attemptCommit();
+      }
+      throw err;
+    }
+  }
+
+  /** Creates a blob using the GitHub Git Data API */
+  async createBlob(content: string): Promise<string> {
+    const url = `https://api.github.com/repos/${this.owner}/${this.repo}/git/blobs`;
+    const res = await this.fetchWithRetry(url, {
+      method: 'POST',
+      headers: { ...this.headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content,
+        encoding: 'utf-8',
+      }),
+    });
+    if (!res.ok) {
+      throw new GitHubApiError(
+        `POST blob failed: ${res.status} ${await safeText(res)}`,
+        res.status,
+      );
+    }
+    const data = await res.json();
+    return data.sha;
+  }
+
   /** Returns null if the file doesn't exist yet (404) — that's an expected case
    *  (first sync of a new file), not an error. */
   async getFile(path: string): Promise<GitHubFile | null> {
@@ -98,14 +249,7 @@ export class GitHubClient {
   }
 
   /** Creates or updates a file. Pass the previous sha (from getFile) when updating
-   *  an existing file — GitHub requires it to prevent accidental overwrites.
-   *
-   *  Auto-retries once on a 409 conflict: this happens when a shared file
-   *  (stats.json, README.md — every sync touches these) gets updated by another
-   *  sync in between our GET and this PUT, making our sha stale. Without this,
-   *  the per-problem solution file (a unique path, no contention) still succeeds
-   *  while the shared stats/README update silently fails — exactly the symptom
-   *  of "new files show up but the dashboard stops updating." */
+   *  an existing file — GitHub requires it to prevent accidental overwrites. */
   async putFile(path: string, content: string, message: string, sha?: string): Promise<void> {
     try {
       await this.attemptPut(path, content, message, sha);

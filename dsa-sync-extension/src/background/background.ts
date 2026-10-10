@@ -11,7 +11,7 @@ import {
   renderFailedNotesReadme,
   hasExistingAiNotes,
 } from '../shared/readme.js';
-import { GitHubClient, GitHubApiError } from '../shared/github.js';
+import { GitHubClient, GitHubApiError, CommitFileInput } from '../shared/github.js';
 import { generateNotes, generateApproachCode, DEFAULT_GEMINI_MODEL } from '../shared/gemini.js';
 import type { ExtensionConfig, ProblemMetadata, SyncStats } from '../shared/types.js';
 
@@ -139,10 +139,47 @@ function sendStep(
     });
 }
 
+function sendPhaseA(
+  tabId: number | undefined,
+  folderPath: string,
+  totalDurationSeconds: number,
+): void {
+  if (tabId === undefined) return;
+  chrome.tabs
+    .sendMessage(tabId, {
+      type: 'DSA_PHASE_A_DONE',
+      folderPath,
+      totalDurationSeconds,
+    })
+    .catch(() => {
+      // Tab may have navigated or closed
+    });
+}
+
+function sendPhaseB(
+  tabId: number | undefined,
+  aiFailureReason: string | null,
+): void {
+  if (tabId === undefined) return;
+  chrome.tabs
+    .sendMessage(tabId, {
+      type: 'DSA_PHASE_B_DONE',
+      aiFailureReason,
+    })
+    .catch(() => {
+      // Tab may have navigated or closed
+    });
+}
+
 export async function syncProblem(
   metadata: ProblemMetadata,
   tabId?: number,
-): Promise<{ path: string; folderPath: string; aiFailureReason: string | null }> {
+): Promise<{
+  path: string;
+  folderPath: string;
+  aiFailureReason: string | null;
+  totalDurationSeconds: number;
+}> {
   const startedAt = Date.now();
 
   // Step 1: Submitting
@@ -167,24 +204,13 @@ export async function syncProblem(
   const readmePath = `${config.destinationRoot}/README.md`;
   const rootReadmePath = 'README.md';
 
-  // Step 2: Pushing code
-  sendStep(tabId, 'pushing', 'active');
-
   const commentPrefix = getCommentPrefix(metadata.language);
 
-  // 2a. Optimal code
-  const existingOptimal = await client.getFile(optimalSolutionPath).catch((err) => {
-    if (err instanceof GitHubApiError && err.status === 404) return null;
-    throw err;
-  });
-  await client.putFile(
-    optimalSolutionPath,
-    metadata.code,
-    `Add LC${metadata.id} - ${metadata.title} (Optimal)`,
-    existingOptimal?.sha,
-  );
+  // Prepare code file inputs
+  const codeFilesData: Array<{ path: string; content: string }> = [
+    { path: optimalSolutionPath, content: metadata.code },
+  ];
 
-  // 2b. Better code (if provided)
   const betterCode = metadata.approaches?.better?.trim();
   if (betterCode) {
     const betterFileName = resolveApproachFileName(metadata, config, 'better');
@@ -193,17 +219,9 @@ export async function syncProblem(
     const content = isAi
       ? `${commentPrefix} AI-generated, not verified on LeetCode\n\n${betterCode}`
       : betterCode;
-
-    const existingBetter = await client.getFile(betterPath).catch(() => null);
-    await client.putFile(
-      betterPath,
-      content,
-      `Add LC${metadata.id} - ${metadata.title} (Better)`,
-      existingBetter?.sha,
-    );
+    codeFilesData.push({ path: betterPath, content });
   }
 
-  // 2c. Brute code (if provided)
   const bruteCode = metadata.approaches?.brute?.trim();
   if (bruteCode) {
     const bruteFileName = resolveApproachFileName(metadata, config, 'brute');
@@ -212,111 +230,186 @@ export async function syncProblem(
     const content = isAi
       ? `${commentPrefix} AI-generated, not verified on LeetCode\n\n${bruteCode}`
       : bruteCode;
-
-    const existingBrute = await client.getFile(brutePath).catch(() => null);
-    await client.putFile(
-      brutePath,
-      content,
-      `Add LC${metadata.id} - ${metadata.title} (Brute)`,
-      existingBrute?.sha,
-    );
+    codeFilesData.push({ path: brutePath, content });
   }
 
-  sendStep(tabId, 'pushing', 'done');
+  // Step 2: Pushing code
+  sendStep(tabId, 'pushing', 'active');
 
-  // Step 3: Writing notes
-  sendStep(tabId, 'notes', 'active');
+  // Start uploading code blobs in parallel with Gemini
+  const codeBlobsPromise = Promise.all(
+    codeFilesData.map(async (f) => ({
+      path: f.path,
+      sha: await client.createBlob(f.content),
+    })),
+  );
 
-  let aiFailureReason: string | null = null;
-  const existingExplanation = await client.getFile(explanationPath).catch(() => null);
-  const alreadyHasNotes = hasExistingAiNotes(existingExplanation?.content);
+  // Start pre-fetching existing files in parallel
+  const existingFilesPromise = Promise.all([
+    client.getFile(explanationPath).catch(() => null),
+    loadStats(client, statsPath),
+    client.getFile(readmePath).catch(() => null),
+    client.getFile(rootReadmePath).catch(() => null),
+  ]);
 
+  // Start Gemini in parallel
   const apiKey = config.geminiApiKey?.trim();
   const model = config.geminiModel?.trim() || DEFAULT_GEMINI_MODEL;
+  const geminiPromise = apiKey
+    ? generateNotes(metadata, apiKey, model)
+    : Promise.resolve({ ok: false as const, reason: 'Missing Gemini API key' });
 
-  let explanationBody: string | null = null;
+  // Race Gemini against ~4000ms threshold to prevent Pages check cancellation noise
+  const raceTimeout = new Promise<{ done: false }>((resolve) =>
+    setTimeout(() => resolve({ done: false }), 4000),
+  );
+  const geminiRace = geminiPromise.then((res) => ({ done: true as const, res }));
+  const raceResult = await Promise.race([geminiRace, raceTimeout]);
 
-  if (apiKey) {
-    const geminiRes = await generateNotes(metadata, apiKey, model);
+  let aiFailureReason: string | null = null;
+  const commitMessage = `Add LC${metadata.id} - ${metadata.title}`;
+
+  if (raceResult.done) {
+    // ─── SINGLE COMMIT FLOW (Gemini finished within ~4s) ───
+    const geminiRes = raceResult.res;
+    const [existingExplanation, baseStats, existingReadme, existingRootReadme] =
+      await existingFilesPromise;
+    const codeBlobs = await codeBlobsPromise;
+
+    sendStep(tabId, 'pushing', 'done');
+    sendStep(tabId, 'notes', 'active');
+
+    const alreadyHasNotes = hasExistingAiNotes(existingExplanation?.content);
+    let explanationBody: string | null = null;
+
     if (geminiRes.ok) {
       explanationBody = renderGeminiNotesReadme(metadata, geminiRes.data);
     } else {
       aiFailureReason = geminiRes.reason;
       if (!alreadyHasNotes) {
-        explanationBody = renderFailedNotesReadme(metadata, geminiRes.reason);
+        if (!apiKey) {
+          explanationBody = renderFailedNotesReadme(
+            metadata,
+            'Add a Gemini API key in extension settings to auto-generate technical notes.',
+          );
+        } else {
+          explanationBody = renderFailedNotesReadme(metadata, geminiRes.reason);
+        }
       }
     }
-  } else {
-    aiFailureReason = 'Missing Gemini API key';
-    if (!alreadyHasNotes) {
-      explanationBody = renderFailedNotesReadme(
-        metadata,
-        'Add a Gemini API key in extension settings to auto-generate technical notes.',
-      );
-    }
-  }
 
-  if (explanationBody !== null) {
-    await client.putFile(
-      explanationPath,
-      explanationBody,
-      `Add notes for LC${metadata.id} - ${metadata.title}`,
-      existingExplanation?.sha,
+    sendStep(tabId, 'notes', 'done', aiFailureReason ?? undefined);
+    sendStep(tabId, 'stats', 'active');
+
+    const automatedSeconds = (Date.now() - startedAt) / 1000;
+    const updatedStats = applySolvedProblem(baseStats, metadata, automatedSeconds);
+    const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
+    const renderedRootReadme = renderCompactReadme(
+      existingRootReadme?.content ?? null,
+      updatedStats,
+      `${config.destinationRoot}/README.md`,
     );
+
+    const allFiles: CommitFileInput[] = [...codeBlobs];
+    if (explanationBody !== null) {
+      allFiles.push({ path: explanationPath, content: explanationBody });
+    }
+    allFiles.push({ path: statsPath, content: JSON.stringify(updatedStats, null, 2) });
+    allFiles.push({ path: readmePath, content: renderedReadme });
+    allFiles.push({ path: rootReadmePath, content: renderedRootReadme });
+
+    await client.commitFiles(allFiles, commitMessage);
+
+    await chrome.storage.local.set({
+      stats: updatedStats,
+      lastSyncedMetadata: metadata,
+      lastSyncedPath: `${folder}/${problemFolder}`,
+    });
+
+    sendStep(tabId, 'stats', 'done');
+
+    return {
+      path: optimalSolutionPath,
+      folderPath: `${folder}/${problemFolder}`,
+      aiFailureReason,
+      totalDurationSeconds: (Date.now() - startedAt) / 1000,
+    };
+  } else {
+    // ─── TWO-PHASE COMMIT FLOW (Gemini took > 4s) ───
+    // Phase A: Push code files immediately in one commit
+    const codeBlobs = await codeBlobsPromise;
+    await client.commitFiles(codeBlobs, commitMessage);
+    sendStep(tabId, 'pushing', 'done');
+
+    const phaseADuration = (Date.now() - startedAt) / 1000;
+    sendPhaseA(tabId, `${folder}/${problemFolder}`, phaseADuration);
+
+    // Phase B: Wait for Gemini notes and push README + stats
+    sendStep(tabId, 'notes', 'active');
+
+    const [geminiRes, [existingExplanation, baseStats, existingReadme, existingRootReadme]] =
+      await Promise.all([geminiPromise, existingFilesPromise]);
+
+    const alreadyHasNotes = hasExistingAiNotes(existingExplanation?.content);
+    let explanationBody: string | null = null;
+
+    if (geminiRes.ok) {
+      explanationBody = renderGeminiNotesReadme(metadata, geminiRes.data);
+    } else {
+      aiFailureReason = geminiRes.reason;
+      if (!alreadyHasNotes) {
+        if (!apiKey) {
+          explanationBody = renderFailedNotesReadme(
+            metadata,
+            'Add a Gemini API key in extension settings to auto-generate technical notes.',
+          );
+        } else {
+          explanationBody = renderFailedNotesReadme(metadata, geminiRes.reason);
+        }
+      }
+    }
+
+    sendStep(tabId, 'notes', 'done', aiFailureReason ?? undefined);
+    sendStep(tabId, 'stats', 'active');
+
+    const automatedSeconds = (Date.now() - startedAt) / 1000;
+    const updatedStats = applySolvedProblem(baseStats, metadata, automatedSeconds);
+    const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
+    const renderedRootReadme = renderCompactReadme(
+      existingRootReadme?.content ?? null,
+      updatedStats,
+      `${config.destinationRoot}/README.md`,
+    );
+
+    const phaseBFiles: CommitFileInput[] = [];
+    if (explanationBody !== null) {
+      phaseBFiles.push({ path: explanationPath, content: explanationBody });
+    }
+    phaseBFiles.push({ path: statsPath, content: JSON.stringify(updatedStats, null, 2) });
+    phaseBFiles.push({ path: readmePath, content: renderedReadme });
+    phaseBFiles.push({ path: rootReadmePath, content: renderedRootReadme });
+
+    await client.commitFiles(
+      phaseBFiles,
+      `Add notes & stats for LC${metadata.id} - ${metadata.title}`,
+    );
+
+    await chrome.storage.local.set({
+      stats: updatedStats,
+      lastSyncedMetadata: metadata,
+      lastSyncedPath: `${folder}/${problemFolder}`,
+    });
+
+    sendStep(tabId, 'stats', 'done');
+    sendPhaseB(tabId, aiFailureReason);
+
+    return {
+      path: optimalSolutionPath,
+      folderPath: `${folder}/${problemFolder}`,
+      aiFailureReason,
+      totalDurationSeconds: (Date.now() - startedAt) / 1000,
+    };
   }
-
-  sendStep(tabId, 'notes', 'done', aiFailureReason ?? undefined);
-
-  // Step 4: Updating stats
-  sendStep(tabId, 'stats', 'active');
-
-  const stats = await loadStats(client, statsPath);
-  const automatedSeconds = (Date.now() - startedAt) / 1000;
-  const updatedStats = applySolvedProblem(stats, metadata, automatedSeconds);
-
-  const existingStatsFile = await client.getFile(statsPath).catch(() => null);
-  await client.putFile(
-    statsPath,
-    JSON.stringify(updatedStats, null, 2),
-    `Update stats - LC${metadata.id}`,
-    existingStatsFile?.sha,
-  );
-
-  const existingReadme = await client.getFile(readmePath).catch(() => null);
-  const renderedReadme = renderRootReadme(existingReadme?.content ?? null, updatedStats);
-  await client.putFile(
-    readmePath,
-    renderedReadme,
-    `Update README - LC${metadata.id}`,
-    existingReadme?.sha,
-  );
-
-  const existingRootReadme = await client.getFile(rootReadmePath).catch(() => null);
-  const renderedRootReadme = renderCompactReadme(
-    existingRootReadme?.content ?? null,
-    updatedStats,
-    `${config.destinationRoot}/README.md`,
-  );
-  await client.putFile(
-    rootReadmePath,
-    renderedRootReadme,
-    `Update README - LC${metadata.id}`,
-    existingRootReadme?.sha,
-  );
-
-  await chrome.storage.local.set({
-    stats: updatedStats,
-    lastSyncedMetadata: metadata,
-    lastSyncedPath: `${folder}/${problemFolder}`,
-  });
-
-  sendStep(tabId, 'stats', 'done');
-
-  return {
-    path: optimalSolutionPath,
-    folderPath: `${folder}/${problemFolder}`,
-    aiFailureReason,
-  };
 }
 
 async function handleGenerateApproach(
@@ -371,14 +464,11 @@ async function handleRegenerateNotes(): Promise<{ ok: true } | { ok: false; reas
   const problemFolder = optimalFileName.replace(/\.[^./]+$/, '');
   const explanationPath = `${config.destinationRoot}/${folder}/${problemFolder}/README.md`;
 
-  const existingExplanation = await client.getFile(explanationPath).catch(() => null);
   const body = renderGeminiNotesReadme(metadata, result.data);
 
-  await client.putFile(
-    explanationPath,
-    body,
+  await client.commitFiles(
+    [{ path: explanationPath, content: body }],
     `Regenerate AI notes for LC${metadata.id} - ${metadata.title}`,
-    existingExplanation?.sha,
   );
 
   return { ok: true };

@@ -20,6 +20,11 @@ export class LwsShadowUI {
   private countdownTimer: number | null = null;
   private isTyping = false;
   private remainingSeconds = 8;
+  private syncStartTime = 0;
+  private currentStepStartTime = 0;
+  private currentActiveStep: 'submitting' | 'pushing' | 'notes' | 'stats' | null = null;
+  private stepperTimer: number | null = null;
+  private stepDurations: Partial<Record<'submitting' | 'pushing' | 'notes' | 'stats', number>> = {};
   private steps: Record<'submitting' | 'pushing' | 'notes' | 'stats', 'pending' | 'active' | 'done'> = {
     submitting: 'pending',
     pushing: 'pending',
@@ -266,6 +271,10 @@ export class LwsShadowUI {
 
   public showStepper(): void {
     if (!this.shadow) return;
+    this.syncStartTime = Date.now();
+    this.currentStepStartTime = Date.now();
+    this.currentActiveStep = 'submitting';
+    this.stepDurations = {};
     this.steps = {
       submitting: 'active',
       pushing: 'pending',
@@ -273,6 +282,26 @@ export class LwsShadowUI {
       stats: 'pending',
     };
     this.renderStepperHtml();
+    this.startStepperTimer();
+  }
+
+  private startStepperTimer(): void {
+    if (this.stepperTimer) clearInterval(this.stepperTimer);
+    this.stepperTimer = window.setInterval(() => {
+      if (!this.shadow || !this.currentActiveStep) return;
+      const elapsed = ((Date.now() - this.currentStepStartTime) / 1000).toFixed(1);
+      const timerEl = this.shadow.querySelector(`#step-${this.currentActiveStep} .lws-step-timer`);
+      if (timerEl) {
+        timerEl.textContent = `${elapsed}s`;
+      }
+    }, 100);
+  }
+
+  private stopStepperTimer(): void {
+    if (this.stepperTimer) {
+      clearInterval(this.stepperTimer);
+      this.stepperTimer = null;
+    }
   }
 
   public updateStep(
@@ -293,6 +322,25 @@ export class LwsShadowUI {
         indicator.innerHTML = `<span class="lws-spinner"></span>`;
       }
     }
+
+    const timerEl = stepEl.querySelector('.lws-step-timer');
+    if (status === 'done') {
+      const duration = (Date.now() - this.currentStepStartTime) / 1000;
+      this.stepDurations[step] = duration;
+      if (timerEl) {
+        timerEl.textContent = `${duration.toFixed(1)}s`;
+      }
+      if (this.currentActiveStep === step) {
+        this.currentActiveStep = null;
+      }
+    } else if (status === 'active') {
+      this.currentActiveStep = step;
+      this.currentStepStartTime = Date.now();
+      if (timerEl) {
+        timerEl.textContent = '0.0s';
+      }
+    }
+
     if (detail) {
       const detailEl = stepEl.querySelector('.lws-step-detail');
       if (detailEl) detailEl.textContent = detail;
@@ -315,7 +363,10 @@ export class LwsShadowUI {
           <div class="lws-step lws-step-${this.steps.submitting}" id="step-submitting">
             <div class="lws-step-indicator">${this.steps.submitting === 'done' ? this.getCheckmarkSvg() : '<span class="lws-spinner"></span>'}</div>
             <div class="lws-step-text">
-              <span class="lws-step-label">Submitting</span>
+              <div class="lws-step-header-row">
+                <span class="lws-step-label">Submitting</span>
+                <span class="lws-step-timer">0.0s</span>
+              </div>
               <span class="lws-step-detail">Connecting to repository</span>
             </div>
           </div>
@@ -323,7 +374,10 @@ export class LwsShadowUI {
           <div class="lws-step lws-step-${this.steps.pushing}" id="step-pushing">
             <div class="lws-step-indicator">${this.steps.pushing === 'done' ? this.getCheckmarkSvg() : this.steps.pushing === 'active' ? '<span class="lws-spinner"></span>' : '2'}</div>
             <div class="lws-step-text">
-              <span class="lws-step-label">Pushing code</span>
+              <div class="lws-step-header-row">
+                <span class="lws-step-label">Pushing code</span>
+                <span class="lws-step-timer">0.0s</span>
+              </div>
               <span class="lws-step-detail">Uploading solutions to GitHub</span>
             </div>
           </div>
@@ -331,7 +385,10 @@ export class LwsShadowUI {
           <div class="lws-step lws-step-${this.steps.notes}" id="step-notes">
             <div class="lws-step-indicator">${this.steps.notes === 'done' ? this.getCheckmarkSvg() : this.steps.notes === 'active' ? '<span class="lws-spinner"></span>' : '3'}</div>
             <div class="lws-step-text">
-              <span class="lws-step-label">Writing notes</span>
+              <div class="lws-step-header-row">
+                <span class="lws-step-label">Writing notes</span>
+                <span class="lws-step-timer">0.0s</span>
+              </div>
               <span class="lws-step-detail">Generating Gemini technical notes</span>
             </div>
           </div>
@@ -339,7 +396,10 @@ export class LwsShadowUI {
           <div class="lws-step lws-step-${this.steps.stats}" id="step-stats">
             <div class="lws-step-indicator">${this.steps.stats === 'done' ? this.getCheckmarkSvg() : this.steps.stats === 'active' ? '<span class="lws-spinner"></span>' : '4'}</div>
             <div class="lws-step-text">
-              <span class="lws-step-label">Updating stats</span>
+              <div class="lws-step-header-row">
+                <span class="lws-step-label">Updating stats</span>
+                <span class="lws-step-timer">0.0s</span>
+              </div>
               <span class="lws-step-detail">Syncing progress and READMEs</span>
             </div>
           </div>
@@ -354,12 +414,22 @@ export class LwsShadowUI {
     aiFailureReason?: string | null;
     soundEnabled?: boolean;
     soundVolume?: number;
+    syncDurationSeconds?: number;
+    hasPendingNotes?: boolean;
   }): void {
     if (!this.shadow) return;
+    this.stopStepperTimer();
 
     if (params.soundEnabled !== false) {
       playSuccessChime(params.soundVolume ?? 0.5);
     }
+
+    const totalSeconds =
+      params.syncDurationSeconds !== undefined
+        ? params.syncDurationSeconds.toFixed(1)
+        : this.syncStartTime > 0
+          ? ((Date.now() - this.syncStartTime) / 1000).toFixed(1)
+          : '0.0';
 
     const approachesPushed: string[] = ['Optimal'];
     if (params.metadata.approaches?.better) approachesPushed.push('Better');
@@ -372,8 +442,11 @@ export class LwsShadowUI {
         <div class="lws-header">
           <div class="lws-title-row">
             <span class="lws-success-icon">✓</span>
-            <div>
-              <strong class="lws-title" style="font-size:14px;color:#4ade80;">Pushed to GitHub!</strong>
+            <div style="flex:1;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <strong class="lws-title" style="font-size:13.5px;color:#4ade80;">Pushed to GitHub!</strong>
+                <span class="lws-pill lws-pill-time">⚡ Synced in ${totalSeconds}s</span>
+              </div>
               <div style="font-size:11.5px;color:rgba(255,255,255,0.7);margin-top:2px;">${escapeHtml(params.metadata.title)}</div>
             </div>
             <button class="lws-close-btn" id="lws-success-close" aria-label="Close">×</button>
@@ -383,6 +456,11 @@ export class LwsShadowUI {
         <div class="lws-success-body">
           <div class="lws-pushed-badges">
             ${approachesPushed.map((app) => `<span class="lws-pill">✓ ${app}</span>`).join(' ')}
+            ${
+              params.hasPendingNotes
+                ? `<span class="lws-chip lws-chip-pulsing" id="lws-notes-chip">Writing notes...</span>`
+                : ''
+            }
           </div>
 
           ${
@@ -417,6 +495,31 @@ export class LwsShadowUI {
     }, 9000);
   }
 
+  public markNotesFinished(aiFailureReason?: string | null): void {
+    if (!this.shadow) return;
+    const chip = this.shadow.getElementById('lws-notes-chip');
+    if (chip) {
+      chip.classList.remove('lws-chip-pulsing');
+      if (aiFailureReason) {
+        chip.className = 'lws-chip lws-chip-warning';
+        chip.textContent = '⚠️ Notes skipped';
+      } else {
+        chip.className = 'lws-chip lws-chip-success';
+        chip.textContent = '✓ Notes written';
+      }
+    }
+    if (aiFailureReason) {
+      const container = this.shadow.querySelector('.lws-success-body');
+      const existingWarning = this.shadow.querySelector('.lws-ai-warning');
+      if (!existingWarning && container) {
+        const warningDiv = document.createElement('div');
+        warningDiv.className = 'lws-ai-warning';
+        warningDiv.textContent = `⚠️ AI notes note: ${aiFailureReason}`;
+        container.appendChild(warningDiv);
+      }
+    }
+  }
+
   public showError(params: {
     message: string;
     onRetry?: () => void;
@@ -424,6 +527,7 @@ export class LwsShadowUI {
     soundVolume?: number;
   }): void {
     if (!this.shadow) return;
+    this.stopStepperTimer();
 
     if (params.soundEnabled !== false) {
       playErrorTone(params.soundVolume ?? 0.5);
@@ -459,6 +563,7 @@ export class LwsShadowUI {
 
   public dismiss(): void {
     if (this.countdownTimer) clearInterval(this.countdownTimer);
+    this.stopStepperTimer();
     if (this.shadow) {
       this.shadow.innerHTML = '';
     }
@@ -762,9 +867,21 @@ export class LwsShadowUI {
         background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.2);
         color: rgba(255, 255, 255, 0.6); transition: all 0.25s ease;
       }
-      .lws-step-text { display: flex; flex-direction: column; }
+      .lws-step-text { display: flex; flex-direction: column; flex: 1; }
+      .lws-step-header-row { display: flex; align-items: center; justify-content: space-between; }
       .lws-step-label { font-size: 12.5px; font-weight: 600; color: #ffffff; }
-      .lws-step-detail { font-size: 11px; color: rgba(255, 255, 255, 0.65); }
+      .lws-step-timer {
+        font-family: ui-monospace, "SF Mono", monospace; font-size: 10.5px;
+        color: rgba(255, 255, 255, 0.6); background: rgba(255, 255, 255, 0.08);
+        padding: 1px 6px; border-radius: 9999px; border: 1px solid rgba(255, 255, 255, 0.14);
+      }
+      .lws-step-active .lws-step-timer {
+        color: #c4b5fd; border-color: rgba(139, 92, 246, 0.45); background: rgba(139, 92, 246, 0.18);
+      }
+      .lws-step-done .lws-step-timer {
+        color: #4ade80; border-color: rgba(74, 222, 128, 0.35); background: rgba(74, 222, 128, 0.12);
+      }
+      .lws-step-detail { font-size: 11px; color: rgba(255, 255, 255, 0.65); margin-top: 1px; }
 
       .lws-step-active .lws-step-indicator {
         background: rgba(139, 92, 246, 0.25); border-color: #8b5cf6; color: #ffffff;
@@ -808,10 +925,33 @@ export class LwsShadowUI {
         display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px;
         box-shadow: 0 0 14px rgba(239, 68, 68, 0.4);
       }
-      .lws-pushed-badges { display: flex; gap: 6px; margin: 8px 0; }
+      .lws-pushed-badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; align-items: center; }
       .lws-pill {
         font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px;
         background: rgba(63, 185, 80, 0.2); color: #4ade80; border: 1px solid rgba(63, 185, 80, 0.4);
+      }
+      .lws-pill-time {
+        font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 9999px;
+        background: rgba(59, 130, 246, 0.2); color: #93c5fd; border: 1px solid rgba(59, 130, 246, 0.45);
+        white-space: nowrap;
+      }
+      .lws-chip {
+        font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 9999px;
+        display: inline-flex; align-items: center; gap: 4px;
+        background: rgba(139, 92, 246, 0.2); color: #c4b5fd; border: 1px solid rgba(139, 92, 246, 0.45);
+      }
+      .lws-chip-pulsing {
+        animation: lwsChipPulse 1.4s ease-in-out infinite alternate;
+      }
+      @keyframes lwsChipPulse {
+        from { opacity: 0.65; transform: scale(0.97); }
+        to { opacity: 1; transform: scale(1.03); }
+      }
+      .lws-chip-success {
+        background: rgba(45, 212, 191, 0.2); color: #2dd4bf; border-color: rgba(45, 212, 191, 0.4);
+      }
+      .lws-chip-warning {
+        background: rgba(245, 158, 11, 0.2); color: #fbbf24; border-color: rgba(245, 158, 11, 0.4);
       }
       .lws-folder-link {
         display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;

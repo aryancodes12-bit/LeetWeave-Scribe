@@ -346,6 +346,10 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
           <option value="{title}" ${existing?.namingPattern === '{title}' ? 'selected' : ''}>{title} → MoveZeroes.java</option>
           <option value="{id}-{slug}" ${existing?.namingPattern === '{id}-{slug}' ? 'selected' : ''}>{id}-{slug} → 283-move-zeroes.java</option>
         </select>
+
+        <p class="hint" style="margin-top: 10px;">
+          💡 If your repo has GitHub Pages enabled, builds may show cancelled checks; disable Pages if you don't need it.
+        </p>
       </div>
 
       <!-- Section 2: Tokens & AI Keys -->

@@ -10,7 +10,7 @@ export const GEMINI_NOTES_SCHEMA = {
   properties: {
     patternTag: {
       type: 'STRING',
-      description: 'The algorithmic pattern or technique (e.g. Two Pointers, Sliding Window, DFS).',
+      description: 'Core algorithmic pattern (e.g. Two Pointers, DFS). Maximum 4 words.',
     },
     problemSummary: {
       type: 'STRING',
@@ -27,7 +27,7 @@ export const GEMINI_NOTES_SCHEMA = {
     keyInsights: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '2 to 3 concise, high-value insights or takeaways.',
+      description: 'Exactly 2 concise, high-value insights. Max 2 sentences each.',
     },
     approaches: {
       type: 'ARRAY',
@@ -39,23 +39,23 @@ export const GEMINI_NOTES_SCHEMA = {
             enum: ['Brute', 'Better', 'Optimal'],
             description: 'The tier of this approach.',
           },
-          idea: { type: 'STRING', description: 'Core idea in 1-2 concise sentences.' },
+          idea: { type: 'STRING', description: 'Core idea in maximum 2 sentences.' },
           time: { type: 'STRING', description: 'Big-O time complexity (e.g. O(n)).' },
           space: { type: 'STRING', description: 'Big-O space complexity (e.g. O(1)).' },
         },
         required: ['name', 'idea', 'time', 'space'],
       },
-      description: 'Approaches for this problem, reflecting submitted code and standard DSA solutions.',
+      description: '1 to 2 approaches (Optimal, and Brute/Better if provided).',
     },
     edgeCases: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: '3 to 4 critical edge cases to keep in mind.',
+      description: '2 to 3 critical edge cases. Max 1 sentence each.',
     },
     similarProblems: {
       type: 'ARRAY',
       items: { type: 'STRING' },
-      description: 'Up to 3 similar LeetCode problem titles.',
+      description: 'Up to 2 similar LeetCode problem titles.',
     },
   },
   required: [
@@ -68,6 +68,24 @@ export const GEMINI_NOTES_SCHEMA = {
     'similarProblems',
   ],
 };
+
+export function buildGenerationConfig(model: string): Record<string, unknown> {
+  const config: Record<string, unknown> = {
+    responseMimeType: 'application/json',
+    responseSchema: GEMINI_NOTES_SCHEMA,
+    temperature: 0.3,
+    maxOutputTokens: 900,
+  };
+
+  const isOlder1x = model.includes('1.5') || model.includes('1.0');
+  if (!isOlder1x) {
+    config.thinkingConfig = {
+      thinkingBudget: 0,
+    };
+  }
+
+  return config;
+}
 
 export interface GeminiModelInfo {
   name: string;
@@ -200,17 +218,24 @@ async function discoverFlashModel(apiKey: string): Promise<string | null> {
 }
 
 /**
- * Executes a single generateContent call with retry on 429 and 5xx.
+ * Executes a single generateContent call with retry on 429 and 5xx,
+ * backed by a 20-second AbortController timeout.
  */
 async function callGenerateContentEndpoint(
   model: string,
   apiKey: string,
   requestBody: unknown,
   backoffMs: number,
+  timeoutMs = 20000,
 ): Promise<{ res?: Response; error?: unknown }> {
   const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
 
   const doFetch = async (): Promise<{ res?: Response; error?: unknown }> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error('Gemini API request timed out after 20s'));
+    }, timeoutMs);
+
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -219,16 +244,25 @@ async function callGenerateContentEndpoint(
           'x-goog-api-key': apiKey.trim(),
         },
         body: JSON.stringify(requestBody),
+        signal: controller.signal,
       });
+      clearTimeout(timer);
       return { res };
     } catch (error) {
+      clearTimeout(timer);
+      if (
+        (error instanceof Error && error.name === 'AbortError') ||
+        controller.signal.aborted
+      ) {
+        return { error: new Error('Gemini API request timed out after 20s') };
+      }
       return { error };
     }
   };
 
   let attempt = await doFetch();
 
-  // Retry once on 429 or 5xx with backoff
+  // Retry once on 429 or 5xx with backoff (only if not aborted)
   if (attempt.res && (attempt.res.status === 429 || attempt.res.status >= 500)) {
     if (backoffMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
@@ -262,6 +296,7 @@ export async function generateNotes(
   }
 
   const prompt = buildNotesPrompt(metadata);
+  let currentModel = model?.trim() || DEFAULT_GEMINI_MODEL;
   const requestBody = {
     contents: [
       {
@@ -269,13 +304,9 @@ export async function generateNotes(
         parts: [{ text: prompt }],
       },
     ],
-    generationConfig: {
-      responseMimeType: 'application/json',
-      responseSchema: GEMINI_NOTES_SCHEMA,
-    },
+    generationConfig: buildGenerationConfig(currentModel),
   };
 
-  let currentModel = model?.trim() || DEFAULT_GEMINI_MODEL;
   let attempt = await callGenerateContentEndpoint(currentModel, apiKey, requestBody, backoffMs);
 
   // 404 Fallback sequence
@@ -284,10 +315,14 @@ export async function generateNotes(
 
     // Fallback 1: Try gemini-flash-latest
     if (currentModel !== FALLBACK_GEMINI_MODEL) {
+      const fallbackRequestBody = {
+        ...requestBody,
+        generationConfig: buildGenerationConfig(FALLBACK_GEMINI_MODEL),
+      };
       const fallbackAttempt = await callGenerateContentEndpoint(
         FALLBACK_GEMINI_MODEL,
         apiKey,
-        requestBody,
+        fallbackRequestBody,
         backoffMs,
       );
 
@@ -306,10 +341,14 @@ export async function generateNotes(
       const discoveredModel = await discoverFlashModel(apiKey);
 
       if (discoveredModel && discoveredModel !== currentModel && discoveredModel !== FALLBACK_GEMINI_MODEL) {
+        const discoveredRequestBody = {
+          ...requestBody,
+          generationConfig: buildGenerationConfig(discoveredModel),
+        };
         const discoveredAttempt = await callGenerateContentEndpoint(
           discoveredModel,
           apiKey,
-          requestBody,
+          discoveredRequestBody,
           backoffMs,
         );
 
@@ -325,6 +364,11 @@ export async function generateNotes(
   }
 
   if (attempt.error || !attempt.res) {
+    const errorMsg =
+      attempt.error instanceof Error ? attempt.error.message : String(attempt.error ?? '');
+    if (errorMsg.includes('timed out')) {
+      return { ok: false, reason: 'Gemini API request timed out after 20s' };
+    }
     return { ok: false, reason: 'network' };
   }
 
@@ -386,51 +430,34 @@ export async function generateNotes(
 
 function buildNotesPrompt(metadata: ProblemMetadata): string {
   const parts: string[] = [
-    `You are an expert Data Structures & Algorithms educator.`,
-    `Analyze this solved problem and produce concise, high-signal technical notes.`,
-    `Problem: ${metadata.id}. ${metadata.title}`,
-    `Difficulty: ${metadata.difficulty}`,
-    `Topics: ${metadata.topics.join(', ') || 'N/A'}`,
-    `Language: ${metadata.language}`,
-    `URL: ${metadata.url}`,
+    `DSA Educator: Produce concise notes for LeetCode ${metadata.id}: ${metadata.title} (${metadata.difficulty}).`,
+    `Topics: ${metadata.topics.join(', ') || 'N/A'}. Language: ${metadata.language}.`,
     '',
-    'Optimal submitted code:',
+    'Code:',
     '```' + metadata.language,
     metadata.code,
     '```',
   ];
 
   if (metadata.approaches?.better) {
-    parts.push(
-      '',
-      'Better approach code:',
-      '```' + metadata.language,
-      metadata.approaches.better,
-      '```',
-    );
+    parts.push('Better code:', '```' + metadata.language, metadata.approaches.better, '```');
   }
 
   if (metadata.approaches?.brute) {
-    parts.push(
-      '',
-      'Brute approach code:',
-      '```' + metadata.language,
-      metadata.approaches.brute,
-      '```',
-    );
+    parts.push('Brute code:', '```' + metadata.language, metadata.approaches.brute, '```');
   }
 
   parts.push(
     '',
-    'Instructions:',
-    '1. problemSummary: Maximum 2 sentences in your own words. No filler words.',
-    '2. patternTag: State the primary algorithmic pattern.',
+    'Rules:',
+    '1. problemSummary: Clear summary in your own words, maximum 2 sentences.',
+    '2. patternTag: Primary algorithmic pattern.',
     '3. example: Realistic minimal example with input and output.',
-    '4. keyInsights: 2 to 3 bullet points explaining the core aha moments.',
-    '5. approaches: Analyze the actual code provided. If better or brute was provided, evaluate them; otherwise include standard Brute/Better/Optimal progression for this problem. Keep ideas concise (1-2 sentences).',
-    '6. edgeCases: 3 to 4 critical boundary conditions.',
-    '7. similarProblems: Up to 3 problem titles.',
-    'Keep every sentence punchy. No paragraph longer than 2 sentences.',
+    '4. keyInsights: Exactly 2 concise insights (max 2 sentences each).',
+    '5. approaches: 1-2 approaches with idea in max 2 sentences.',
+    '6. edgeCases: 2-3 boundary conditions (max 1 sentence each).',
+    '7. similarProblems: Up to 2 problem titles.',
+    'Output valid JSON strictly following schema. Maximum 2 sentences per text field.',
   );
 
   return parts.join('\n');
@@ -474,6 +501,10 @@ export async function generateApproachCode(params: {
 
   const requestBody = {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 1200,
+    },
   };
 
   let currentModel = params.model?.trim() || DEFAULT_GEMINI_MODEL;
@@ -518,6 +549,11 @@ export async function generateApproachCode(params: {
   }
 
   if (attempt.error || !attempt.res) {
+    const errorMsg =
+      attempt.error instanceof Error ? attempt.error.message : String(attempt.error ?? '');
+    if (errorMsg.includes('timed out')) {
+      return { ok: false, reason: 'Gemini API request timed out after 20s' };
+    }
     return { ok: false, reason: 'network' };
   }
 

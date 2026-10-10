@@ -22,7 +22,23 @@ interface StepUpdateMessage {
   detail?: string;
 }
 
+interface PhaseAMessage {
+  type: 'DSA_PHASE_A_DONE';
+  folderPath: string;
+  totalDurationSeconds?: number;
+}
+
+interface PhaseBMessage {
+  type: 'DSA_PHASE_B_DONE';
+  aiFailureReason?: string | null;
+}
+
+type ContentMessage = StepUpdateMessage | PhaseAMessage | PhaseBMessage;
+
 const ui = new LwsShadowUI();
+let activeMetadata: ProblemMetadata | null = null;
+let activeConfig: ExtensionConfig | null = null;
+let phaseAShown = false;
 
 // Prime the WebAudio AudioContext on page interactions
 window.addEventListener('click', initAudioContext, { passive: true });
@@ -32,10 +48,25 @@ function getSlugFromUrl(): string | null {
   return match?.[1] ?? null;
 }
 
-// Listen for background step updates
-chrome.runtime.onMessage.addListener((message: StepUpdateMessage) => {
+// Listen for background updates
+chrome.runtime.onMessage.addListener((message: ContentMessage) => {
   if (message.type === 'DSA_STEP_UPDATE') {
     ui.updateStep(message.step, message.status, message.detail);
+  } else if (message.type === 'DSA_PHASE_A_DONE') {
+    phaseAShown = true;
+    if (activeMetadata && activeConfig) {
+      const folderUrl = `https://github.com/${activeConfig.repoOwner}/${activeConfig.repoName}/tree/${activeConfig.branch}/${activeConfig.destinationRoot}/${message.folderPath}`;
+      ui.showSuccess({
+        metadata: activeMetadata,
+        folderUrl,
+        syncDurationSeconds: message.totalDurationSeconds,
+        hasPendingNotes: true,
+        soundEnabled: activeConfig.soundEnabled,
+        soundVolume: activeConfig.soundVolume,
+      });
+    }
+  } else if (message.type === 'DSA_PHASE_B_DONE') {
+    ui.markNotesFinished(message.aiFailureReason);
   }
 });
 
@@ -122,6 +153,9 @@ async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
 
   const onPush = (approaches: ProblemApproaches) => {
     metadata.approaches = approaches;
+    activeMetadata = metadata;
+    activeConfig = config;
+    phaseAShown = false;
 
     chrome.runtime.sendMessage(
       {
@@ -130,31 +164,41 @@ async function handleAccepted(detail: AcceptedEventDetail): Promise<void> {
       },
       (response) => {
         if (chrome.runtime?.lastError) {
-          ui.showError({
-            message: chrome.runtime.lastError.message ?? 'Sync failed.',
-            onRetry: () => onPush(approaches),
-            soundEnabled: config.soundEnabled,
-            soundVolume: config.soundVolume,
-          });
+          if (!phaseAShown) {
+            ui.showError({
+              message: chrome.runtime.lastError.message ?? 'Sync failed.',
+              onRetry: () => onPush(approaches),
+              soundEnabled: config.soundEnabled,
+              soundVolume: config.soundVolume,
+            });
+          }
           return;
         }
 
         if (response?.ok) {
-          const folderUrl = `https://github.com/${config.repoOwner}/${config.repoName}/tree/${config.branch}/${config.destinationRoot}/${response.folderPath}`;
-          ui.showSuccess({
-            metadata,
-            folderUrl,
-            aiFailureReason: response.aiFailureReason,
-            soundEnabled: config.soundEnabled,
-            soundVolume: config.soundVolume,
-          });
+          if (phaseAShown) {
+            ui.markNotesFinished(response.aiFailureReason);
+          } else {
+            const folderUrl = `https://github.com/${config.repoOwner}/${config.repoName}/tree/${config.branch}/${config.destinationRoot}/${response.folderPath}`;
+            ui.showSuccess({
+              metadata,
+              folderUrl,
+              aiFailureReason: response.aiFailureReason,
+              syncDurationSeconds: response.totalDurationSeconds,
+              hasPendingNotes: false,
+              soundEnabled: config.soundEnabled,
+              soundVolume: config.soundVolume,
+            });
+          }
         } else {
-          ui.showError({
-            message: response?.error ?? 'Sync failed.',
-            onRetry: () => onPush(approaches),
-            soundEnabled: config.soundEnabled,
-            soundVolume: config.soundVolume,
-          });
+          if (!phaseAShown) {
+            ui.showError({
+              message: response?.error ?? 'Sync failed.',
+              onRetry: () => onPush(approaches),
+              soundEnabled: config.soundEnabled,
+              soundVolume: config.soundVolume,
+            });
+          }
         }
       },
     );
