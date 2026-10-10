@@ -323,7 +323,8 @@ export async function generateNotes(
 
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
-      return { ok: false, reason: 'invalid key' };
+      const reason = await formatHttpFailureReason(res, 'invalid key');
+      return { ok: false, reason, status: res.status };
     }
     if (res.status === 429) {
       return { ok: false, reason: 'rate limited' };
