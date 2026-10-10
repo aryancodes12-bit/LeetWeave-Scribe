@@ -18,7 +18,9 @@ export interface GeminiModelInfo {
 async function extractGoogleErrorMessage(res: Response): Promise<string> {
   try {
     let data: unknown = null;
-    if (typeof res.json === 'function') {
+    if (typeof res.clone === 'function') {
+      data = await res.clone().json();
+    } else if (typeof res.json === 'function') {
       data = await res.json();
     }
     if (
