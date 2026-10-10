@@ -331,12 +331,15 @@ export async function generateNotes(
       return { ok: false, reason, status: res.status };
     }
     if (res.status === 404) {
-      return { ok: false, reason: 'model not found' };
+      const reason = await formatHttpFailureReason(res, 'model not found');
+      return { ok: false, reason, status: res.status };
     }
     if (res.status >= 500) {
-      return { ok: false, reason: 'server error' };
+      const reason = await formatHttpFailureReason(res, 'server error');
+      return { ok: false, reason, status: res.status };
     }
-    return { ok: false, reason: `API error (${res.status})` };
+    const reason = await formatHttpFailureReason(res, 'API error');
+    return { ok: false, reason, status: res.status };
   }
 
   try {
