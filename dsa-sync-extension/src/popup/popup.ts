@@ -336,6 +336,7 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
           <option value="topic" ${existing?.organization === 'topic' ? 'selected' : ''}>Topic (Array, Two Pointers...)</option>
           <option value="difficulty" ${existing?.organization === 'difficulty' ? 'selected' : ''}>Difficulty (Easy, Medium, Hard)</option>
         </select>
+            <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
 
         <label for="fallbackFolder">Fallback Folder</label>
         <input id="fallbackFolder" placeholder="Uncategorized" value="${escapeAttr(existing?.fallbackFolder ?? 'Uncategorized')}" />
@@ -346,6 +347,7 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
           <option value="{title}" ${existing?.namingPattern === '{title}' ? 'selected' : ''}>{title} → MoveZeroes.java</option>
           <option value="{id}-{slug}" ${existing?.namingPattern === '{id}-{slug}' ? 'selected' : ''}>{id}-{slug} → 283-move-zeroes.java</option>
         </select>
+            <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
       </div>
 
       <!-- Section 2: Tokens & AI Keys -->
@@ -373,7 +375,10 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
 
         <div class="form-row">
           <div>
-            <label for="geminiModel">Gemini Model</label>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:9px 0 4px;">
+              <label for="geminiModelSelect" style="margin:0;">Gemini Model</label>
+              <button type="button" class="lws-btn-inline" id="refresh-models-btn" title="Refresh available models from Google API" style="font-size:10px;padding:2px 7px;">↻ Refresh</button>
+            </div>
             <select id="geminiModelSelect">
               <option value="gemini-3.5-flash">gemini-3.5-flash (Default)</option>
               <option value="gemini-flash-latest">gemini-flash-latest</option>
@@ -383,6 +388,7 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
               <option value="gemini-1.5-pro">gemini-1.5-pro</option>
               <option value="__custom__">Custom / Enter manually...</option>
             </select>
+            <input id="geminiModelCustom" placeholder="e.g. gemini-3.5-flash" style="display:none;margin-top:6px;" value="${escapeAttr(existing?.geminiModel ?? '')}" />
           </div>
           <div>
             <label for="autoPushSeconds">Auto-push (seconds)</label>
