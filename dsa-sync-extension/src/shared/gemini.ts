@@ -12,6 +12,28 @@ export interface GeminiModelInfo {
   supportedGenerationMethods?: string[];
 }
 
+/**
+ * Extracts Google's error message from an API response if available.
+ */
+async function extractGoogleErrorMessage(res: Response): Promise<string> {
+  try {
+    let data: unknown = null;
+    if (typeof res.json === 'function') {
+      data = await res.json();
+    }
+    if (
+      data &&
+      typeof data === 'object' &&
+      'error' in data &&
+      typeof (data as Record<string, any>).error?.message === 'string'
+    ) {
+      return (data as Record<string, any>).error.message.trim();
+    }
+  } catch {
+  }
+  return '';
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
