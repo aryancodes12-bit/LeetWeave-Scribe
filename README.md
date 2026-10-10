@@ -177,11 +177,10 @@ LeetWeave Scribe Extension/     ← Browser extension ("LeetWeave Scribe")
 │   ├── content/                inject.ts (MAIN world), content.ts (ISOLATED world), toast UI
 │   ├── background/             service worker — sync pipeline, GitHub API, Groq
 │   ├── popup/                  popup.html/ts — setup form + dashboard
-│   └── shared/                 rule-engine, dataset, stats, readme, github, groq, env
+│   └── shared/                 rule-engine, dataset, stats, readme, github, gemini
 ├── assets/                     screenshots grid media
 ├── build.mjs                    esbuild bundler (IIFE for content scripts, ESM for background/popup)
 ├── manifest.json                 Manifest V3
-├── .env.example                  copy to .env for a Groq key (gitignored, never committed)
 └── test/
 ```
 
@@ -279,9 +278,10 @@ npm run lint
 - Destination root folder
 - Organization mode + fallback folder
 - File naming pattern
-- GitHub Personal Access Token
-
-Groq key is **not** part of this — it's a build-time `.env` value, not user-entered.
+- GitHub Personal Access Token (`repo` scope)
+- Google Gemini API Key (`x-goog-api-key` header)
+- Gemini Model (defaults to `gemini-3.5-flash`, with dynamic ListModels dropdown, refresh button, and custom input)
+- Sound effects toggle & volume slider
 
 ---
 
@@ -301,6 +301,14 @@ Groq key is **not** part of this — it's a build-time `.env` value, not user-en
 ---
 
 ## 📝 Recent Updates
+
+### Gemini 3.5 & Dynamic Model Discovery
+- **Default model upgraded to `gemini-3.5-flash`** with full multi-step 404 fallback chain and automatic configuration persistence.
+- **Dynamic ListModels dropdown in Settings** with real-time "↻ Refresh" button and manual free-text fallback.
+- **Explicit error surfacing** displaying HTTP status and Google API error messages directly in the toast notification and generated markdown.
+
+### Premium Glassmorphism UI
+- **Popup & in-page toast redesigned** with translucent cards, CSS backdrop filters, glowing accent buttons, and interactive approach tabs (Optimal, Better, Brute).
 
 ### Extension resilience & UX
 
