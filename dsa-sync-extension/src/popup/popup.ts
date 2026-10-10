@@ -446,6 +446,15 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
     modelSelect.value = currentModel;
   }
 
+  modelSelect?.addEventListener('change', () => {
+    if (modelSelect.value === '__custom__') {
+      modelCustom.style.display = 'block';
+      modelCustom.focus();
+    } else {
+      modelCustom.style.display = 'none';
+    }
+  });
+
   // Mask toggle for Gemini Key
   const geminiInput = document.getElementById('geminiApiKey') as HTMLInputElement;
   const toggleBtn = document.getElementById('toggle-gemini-key');
