@@ -374,7 +374,15 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
         <div class="form-row">
           <div>
             <label for="geminiModel">Gemini Model</label>
-            <input id="geminiModel" placeholder="${DEFAULT_GEMINI_MODEL}" value="${escapeAttr(existing?.geminiModel ?? DEFAULT_GEMINI_MODEL)}" />
+            <select id="geminiModelSelect">
+              <option value="gemini-3.5-flash">gemini-3.5-flash (Default)</option>
+              <option value="gemini-flash-latest">gemini-flash-latest</option>
+              <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+              <option value="gemini-2.0-flash">gemini-2.0-flash</option>
+              <option value="gemini-1.5-flash">gemini-1.5-flash</option>
+              <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+              <option value="__custom__">Custom / Enter manually...</option>
+            </select>
           </div>
           <div>
             <label for="autoPushSeconds">Auto-push (seconds)</label>
