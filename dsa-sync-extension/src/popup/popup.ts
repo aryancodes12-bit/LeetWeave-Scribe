@@ -2,7 +2,7 @@ import type { ExtensionConfig, ProblemMetadata, SyncStats } from '../shared/type
 import { emptyStats } from '../shared/types.js';
 import { getDifficultyTotals } from '../shared/dataset.js';
 import { ASSUMED_MANUAL_SECONDS_PER_PROBLEM } from '../shared/stats.js';
-import { DEFAULT_GEMINI_MODEL } from '../shared/gemini.js';
+import { listGeminiModels, DEFAULT_GEMINI_MODEL } from '../shared/gemini.js';
 
 const app = document.getElementById('app')!;
 const subtitle = document.getElementById('header-subtitle')!;
