@@ -133,6 +133,45 @@ async function discoverFlashModel(apiKey: string): Promise<string | null> {
   return null;
 }
 
+/**
+ * Executes a single generateContent call with retry on 429 and 5xx.
+ */
+async function callGenerateContentEndpoint(
+  model: string,
+  apiKey: string,
+  requestBody: unknown,
+  backoffMs: number,
+): Promise<{ res?: Response; error?: unknown }> {
+  const endpoint = `${GEMINI_API_BASE}/${encodeURIComponent(model)}:generateContent`;
+
+  const doFetch = async (): Promise<{ res?: Response; error?: unknown }> => {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey.trim(),
+        },
+        body: JSON.stringify(requestBody),
+      });
+      return { res };
+    } catch (error) {
+      return { error };
+    }
+  };
+
+  let attempt = await doFetch();
+
+  if (attempt.res && (attempt.res.status === 429 || attempt.res.status >= 500)) {
+    if (backoffMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+    attempt = await doFetch();
+  }
+
+  return attempt;
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
