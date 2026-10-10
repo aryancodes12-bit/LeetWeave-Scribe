@@ -327,7 +327,8 @@ export async function generateNotes(
       return { ok: false, reason, status: res.status };
     }
     if (res.status === 429) {
-      return { ok: false, reason: 'rate limited' };
+      const reason = await formatHttpFailureReason(res, 'rate limited');
+      return { ok: false, reason, status: res.status };
     }
     if (res.status === 404) {
       return { ok: false, reason: 'model not found' };
