@@ -493,6 +493,18 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
       customOpt.value = '__custom__';
       customOpt.textContent = 'Custom / Enter manually...';
       modelSelect.appendChild(customOpt);
+
+      if (listRes.models.includes(prevVal)) {
+        modelSelect.value = prevVal;
+      } else if (prevVal && prevVal !== '__custom__') {
+        modelSelect.value = '__custom__';
+        modelCustom.style.display = 'block';
+        modelCustom.value = prevVal;
+      }
+      setTimeout(() => {
+        if (refreshBtn) refreshBtn.textContent = '↻ Refresh';
+        statusMsg.textContent = '';
+      }, 2500);
     } else {
       statusMsg.className = 'status-msg error';
       statusMsg.textContent = `Failed to list models: ${listRes.reason}`;
