@@ -292,6 +292,11 @@ export async function generateNotes(
     }
   }
 
+    if (attempt.res?.status === 404) {
+      console.warn(`[LWS] Querying ListModels for available flash models...`);
+      const discoveredModel = await discoverFlashModel(apiKey);
+    }
+
   if (attempt.error || !attempt.res) {
     return { ok: false, reason: 'network' };
   }
