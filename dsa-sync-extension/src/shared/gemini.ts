@@ -270,6 +270,27 @@ export async function generateNotes(
   let currentModel = model?.trim() || DEFAULT_GEMINI_MODEL;
   let attempt = await callGenerateContentEndpoint(currentModel, apiKey, requestBody, backoffMs);
 
+  // 404 Fallback sequence
+  if (attempt.res?.status === 404) {
+    console.warn(`[LWS] Model "${currentModel}" returned 404. Attempting fallback...`);
+
+    if (currentModel !== FALLBACK_GEMINI_MODEL) {
+      const fallbackAttempt = await callGenerateContentEndpoint(
+        FALLBACK_GEMINI_MODEL,
+        apiKey,
+        requestBody,
+        backoffMs,
+      );
+
+      if (fallbackAttempt.res?.ok) {
+        attempt = fallbackAttempt;
+        currentModel = FALLBACK_GEMINI_MODEL;
+      } else if (fallbackAttempt.res?.status === 404) {
+        attempt = fallbackAttempt;
+      }
+    }
+  }
+
   if (attempt.error || !attempt.res) {
     return { ok: false, reason: 'network' };
   }
