@@ -438,6 +438,13 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
       break;
     }
   }
+  if (!modelFound && currentModel) {
+    const opt = document.createElement('option');
+    opt.value = currentModel;
+    opt.textContent = `${currentModel} (Custom)`;
+    modelSelect.insertBefore(opt, modelSelect.querySelector('option[value="__custom__"]'));
+    modelSelect.value = currentModel;
+  }
 
   // Mask toggle for Gemini Key
   const geminiInput = document.getElementById('geminiApiKey') as HTMLInputElement;
