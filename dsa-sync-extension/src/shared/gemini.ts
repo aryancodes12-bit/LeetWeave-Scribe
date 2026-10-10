@@ -285,6 +285,7 @@ export async function generateNotes(
       if (fallbackAttempt.res?.ok) {
         attempt = fallbackAttempt;
         currentModel = FALLBACK_GEMINI_MODEL;
+        await saveWorkingModelToConfig(FALLBACK_GEMINI_MODEL);
       } else if (fallbackAttempt.res?.status === 404) {
         attempt = fallbackAttempt;
       }
