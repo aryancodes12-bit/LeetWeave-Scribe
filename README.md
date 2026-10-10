@@ -40,15 +40,15 @@ Ships as two independent tools sharing one core engine: a **CLI** (`dsa-sync`) t
 
 <div align="center">
 
-| 🚀 In-Page Toast Notification | 📊 Extension Live Dashboard |
+| 🚀 In-Page Toast Notification (Glassmorphism) | 📊 Extension Live Dashboard (Glassmorphism) |
 | :---: | :---: |
 | ![In-Page Toast](assets/leetcode-toast.png) | ![Live Dashboard](assets/extension-dashboard.png) |
-| **⚙️ Extension Setup & Settings** | **💻 CLI Terminal Sync & Watcher** |
-| ![Extension Settings](assets/extension-settings.png) | ![CLI Workflow](assets/cli-workflow.png) |
-| **🔗 Analytics Dashboard — Landing** | **📈 Analytics — Velocity & Difficulty** |
-| ![Analytics Landing](assets/analytics-landing.png) | ![Analytics Dashboard](assets/analytics-dashboard.png) |
-| **🤖 Per-Problem AI README** | |
-| ![Per-Problem README](assets/per-problem-readme.png) | |
+| **⚙️ Dynamic Gemini Model Select & Settings** | **✨ Glassmorphic Showcase Overview** |
+| ![Extension Settings](assets/extension-settings.png) | ![Glassmorphism Showcase](assets/glassmorphism-showcase.png) |
+| **💻 CLI Terminal Sync & Watcher** | **📈 Analytics — Velocity & Difficulty** |
+| ![CLI Workflow](assets/cli-workflow.png) | ![Analytics Dashboard](assets/analytics-dashboard.png) |
+| **🤖 Per-Problem AI README** | **🔗 Analytics Dashboard — Landing** |
+| ![Per-Problem README](assets/per-problem-readme.png) | ![Analytics Landing](assets/analytics-landing.png) |
 
 </div>
 
