@@ -457,6 +457,13 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
 
   const refreshBtn = document.getElementById('refresh-models-btn') as HTMLButtonElement | null;
   refreshBtn?.addEventListener('click', async () => {
+    const key = getValue('geminiApiKey');
+    const statusMsg = document.getElementById('save-status')!;
+    if (!key) {
+      statusMsg.className = 'status-msg error';
+      statusMsg.textContent = 'Enter a Gemini API key first to list models.';
+      return;
+    }
   });
 
   // Mask toggle for Gemini Key
