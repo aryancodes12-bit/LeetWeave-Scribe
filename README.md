@@ -192,18 +192,9 @@ LeetWeave Scribe Extension/     ← Browser extension ("LeetWeave Scribe")
 **Requires:** Node.js 18+, Chrome (or any Chromium-based browser).
 
 ```bash
-# Install dependencies
+# Navigate to the extension folder and install dependencies
+cd dsa-sync-extension
 npm install
-```
-
-**Optional — AI-generated per-problem notes via Groq:**
-```bash
-cp .env.example .env
-# open .env, add: GROQ_API_KEY=gsk_your_real_key
-```
-Without this, every problem still gets a basic README (title/difficulty/topics/link) automatically — this key only adds an AI-written approach + complexity section on top. It's a build-time constant, not something users enter in the popup (baked in via esbuild at build time, not stored in extension storage).
-
-```bash
 npm run build
 ```
 
@@ -213,14 +204,15 @@ npm run build
 2. Toggle **Developer mode** on (top-right)
 3. Click **Load unpacked**
 4. Select the `dist` folder — **not** the project root, the built output
-5. Click the extension icon → fill in your GitHub repo details + a Personal Access Token (`repo` scope) → **Connect & Save**
+5. Click the extension icon → fill in your GitHub repo details + a Personal Access Token (`repo` scope).
+6. Enter your **Google Gemini API Key** (or get one free from [Google AI Studio](https://aistudio.google.com/apikey)). Select your model (defaults to `gemini-3.5-flash`, with dynamic refresh and custom fallback) → **Save Configuration**.
 
 ### After any rebuild
 
-Reload the extension in `chrome://extensions` (⟳ icon on the card), **and refresh any already-open LeetCode tabs** — a stale tab's content script stays bound to the old extension instance until the page reloads ("Extension context invalidated" if you skip this).
+Reload the extension in `chrome://extensions` (⟳ icon on the card), **and refresh any already-open LeetCode tabs** — a stale tab's content script stays bound to the old extension instance until the page reloads.
 
 ```bash
-npm test           # 19 tests: rule engine, dataset lookup, Groq resilience, time-saved accumulation
+npm test           # 53 tests: Gemini integration, 404 fallback path, rule engine, dataset, retry resilience
 npx tsc --noEmit    # typecheck
 ```
 
