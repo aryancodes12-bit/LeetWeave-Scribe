@@ -5,6 +5,14 @@ export const FALLBACK_GEMINI_MODEL = 'gemini-flash-latest';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+export interface GeminiModelInfo {
+  name: string;
+  displayName?: string;
+  description?: string;
+  supportedGenerationMethods?: string[];
+}
+
+
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
   properties: {
