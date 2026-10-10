@@ -36,6 +36,18 @@ async function extractGoogleErrorMessage(res: Response): Promise<string> {
   return '';
 }
 
+/**
+ * Builds a failure reason string that explicitly includes the HTTP status
+ * and Google's error.message if present.
+ */
+async function formatHttpFailureReason(res: Response, category: string): Promise<string> {
+  const googleMessage = await extractGoogleErrorMessage(res);
+  if (googleMessage) {
+    return `[HTTP ${res.status}] ${category}: ${googleMessage}`;
+  }
+  return `[HTTP ${res.status}] ${category}`;
+}
+
 
 export const GEMINI_NOTES_SCHEMA = {
   type: 'OBJECT',
