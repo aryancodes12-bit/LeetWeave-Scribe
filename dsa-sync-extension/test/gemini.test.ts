@@ -50,13 +50,23 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('Gemini Model Constants', () => {
+  it('has default model set to gemini-3.5-flash', () => {
+    expect(DEFAULT_GEMINI_MODEL).toBe('gemini-3.5-flash');
+  });
+});
+
 describe('generateNotes (Google Gemini API integration)', () => {
   it('returns invalid key immediately when API key is empty', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
 
     const result = await generateNotes(makeMetadata(), '');
-    expect(result).toEqual({ ok: false, reason: 'invalid key' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(401);
+      expect(result.reason).toContain('[HTTP 401]');
+    }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -106,7 +116,11 @@ describe('generateNotes (Google Gemini API integration)', () => {
     );
 
     const result = await generateNotes(makeMetadata(), 'bad-key', DEFAULT_GEMINI_MODEL, 0);
-    expect(result).toEqual({ ok: false, reason: 'invalid key' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(401);
+      expect(result.reason).toContain('[HTTP 401]');
+    }
   });
 
   it('retries once on HTTP 429 and succeeds if second call succeeds', async () => {
@@ -141,7 +155,11 @@ describe('generateNotes (Google Gemini API integration)', () => {
     vi.stubGlobal('fetch', fetchSpy);
 
     const result = await generateNotes(makeMetadata(), 'valid-key', DEFAULT_GEMINI_MODEL, 1);
-    expect(result).toEqual({ ok: false, reason: 'rate limited' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(429);
+      expect(result.reason).toContain('[HTTP 429]');
+    }
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
