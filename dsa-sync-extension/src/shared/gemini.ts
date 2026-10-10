@@ -369,7 +369,7 @@ export async function generateNotes(
       return { ok: false, reason: 'bad JSON' };
     }
 
-    return { ok: true, data: parsed as GeminiNotesData };
+    return { ok: true, data: parsed as GeminiNotesData, workingModel: currentModel };
   } catch {
     return { ok: false, reason: 'bad JSON' };
   }
