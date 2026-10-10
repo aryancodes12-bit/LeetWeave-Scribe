@@ -292,9 +292,27 @@ export async function generateNotes(
     }
   }
 
+    // Fallback 2: Query ListModels for the first flash model
     if (attempt.res?.status === 404) {
       console.warn(`[LWS] Querying ListModels for available flash models...`);
       const discoveredModel = await discoverFlashModel(apiKey);
+
+      if (discoveredModel && discoveredModel !== currentModel && discoveredModel !== FALLBACK_GEMINI_MODEL) {
+        const discoveredAttempt = await callGenerateContentEndpoint(
+          discoveredModel,
+          apiKey,
+          requestBody,
+          backoffMs,
+        );
+
+        if (discoveredAttempt.res?.ok) {
+          attempt = discoveredAttempt;
+          currentModel = discoveredModel;
+          await saveWorkingModelToConfig(discoveredModel);
+        } else {
+          attempt = discoveredAttempt;
+        }
+      }
     }
 
   if (attempt.error || !attempt.res) {
