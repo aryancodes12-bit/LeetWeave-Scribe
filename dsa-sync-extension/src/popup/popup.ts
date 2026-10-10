@@ -425,6 +425,20 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
     </div>
   `;
 
+  // Model select & custom fallback handling
+  const modelSelect = document.getElementById('geminiModelSelect') as HTMLSelectElement;
+  const modelCustom = document.getElementById('geminiModelCustom') as HTMLInputElement;
+  const currentModel = existing?.geminiModel?.trim() || DEFAULT_GEMINI_MODEL;
+
+  let modelFound = false;
+  for (let i = 0; i < modelSelect.options.length; i++) {
+    if (modelSelect.options[i]!.value === currentModel) {
+      modelSelect.selectedIndex = i;
+      modelFound = true;
+      break;
+    }
+  }
+
   // Mask toggle for Gemini Key
   const geminiInput = document.getElementById('geminiApiKey') as HTMLInputElement;
   const toggleBtn = document.getElementById('toggle-gemini-key');
