@@ -455,6 +455,10 @@ function renderSettings(existing?: Partial<ExtensionConfig>): void {
     }
   });
 
+  const refreshBtn = document.getElementById('refresh-models-btn') as HTMLButtonElement | null;
+  refreshBtn?.addEventListener('click', async () => {
+  });
+
   // Mask toggle for Gemini Key
   const geminiInput = document.getElementById('geminiApiKey') as HTMLInputElement;
   const toggleBtn = document.getElementById('toggle-gemini-key');
