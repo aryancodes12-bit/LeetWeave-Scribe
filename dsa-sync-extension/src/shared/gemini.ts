@@ -58,9 +58,11 @@ export async function saveWorkingModelToConfig(workingModel: string): Promise<vo
       if (stored?.config) {
         const updatedConfig = { ...stored.config, geminiModel: workingModel };
         await chrome.storage.local.set({ config: updatedConfig });
+        console.log(`[LWS] Saved working model back to config: ${workingModel}`);
       }
     }
-  } catch {
+  } catch (err) {
+    console.warn('[LWS] Failed to save working model to chrome.storage:', err);
   }
 }
 
