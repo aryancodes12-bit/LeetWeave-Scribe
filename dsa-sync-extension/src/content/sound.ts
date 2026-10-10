@@ -1,13 +1,26 @@
 let audioCtx: AudioContext | null = null;
 
+function hasUserActivation(): boolean {
+  if (typeof navigator !== 'undefined' && 'userActivation' in navigator) {
+    return Boolean(navigator.userActivation.hasBeenActive);
+  }
+  return true;
+}
+
 /**
- * Initializes or resumes the WebAudio AudioContext upon user interaction.
- * Crucial for satisfying browser autoplay policies.
+ * Initializes or resumes the WebAudio AudioContext only upon valid user gesture.
+ * Crucial for satisfying browser autoplay policies without triggering Chrome extension console errors.
  */
 export function initAudioContext(): void {
+  if (!hasUserActivation()) {
+    return;
+  }
+
   try {
     if (!audioCtx) {
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioContextClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioContextClass) {
         audioCtx = new AudioContextClass();
       }
@@ -20,17 +33,25 @@ export function initAudioContext(): void {
   }
 }
 
-// Bind to early user events so the context is unlocked before an Accepted verdict fires
+// Bind to early user events so the context is safely unlocked when the user interacts
 if (typeof window !== 'undefined') {
-  window.addEventListener('click', initAudioContext, { once: false, passive: true });
-  window.addEventListener('keydown', initAudioContext, { once: false, passive: true });
+  const unlockEvents = ['click', 'keydown', 'pointerdown'] as const;
+  const onUserGesture = () => {
+    initAudioContext();
+    if (audioCtx && audioCtx.state === 'running') {
+      unlockEvents.forEach((evt) => window.removeEventListener(evt, onUserGesture));
+    }
+  };
+
+  unlockEvents.forEach((evt) => {
+    window.addEventListener(evt, onUserGesture, { passive: true });
+  });
 }
 
 /**
  * Plays a pleasant rising 3-note chime (C5 -> E5 -> G5) on successful sync.
  */
 export function playSuccessChime(volume = 0.5): void {
-  initAudioContext();
   if (!audioCtx || audioCtx.state !== 'running') return;
 
   const masterVol = Math.max(0, Math.min(1, volume));
@@ -66,7 +87,6 @@ export function playSuccessChime(volume = 0.5): void {
  * Plays a soft low tone on error.
  */
 export function playErrorTone(volume = 0.5): void {
-  initAudioContext();
   if (!audioCtx || audioCtx.state !== 'running') return;
 
   const masterVol = Math.max(0, Math.min(1, volume));

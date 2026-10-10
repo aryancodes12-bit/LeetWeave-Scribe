@@ -2,7 +2,6 @@ import { lookupProblemBySlug } from '../shared/dataset.js';
 import { languageToExtension } from '../shared/language.js';
 import type { ExtensionConfig, ProblemApproaches, ProblemMetadata } from '../shared/types.js';
 import { LwsShadowUI } from './ui.js';
-import { initAudioContext } from './sound.js';
 
 const EVENT_NAME = 'lws:accepted';
 
@@ -39,9 +38,6 @@ const ui = new LwsShadowUI();
 let activeMetadata: ProblemMetadata | null = null;
 let activeConfig: ExtensionConfig | null = null;
 let phaseAShown = false;
-
-// Prime the WebAudio AudioContext on page interactions
-window.addEventListener('click', initAudioContext, { passive: true });
 
 function getSlugFromUrl(): string | null {
   const match = window.location.pathname.match(/^\/problems\/([^/]+)\/?/);
